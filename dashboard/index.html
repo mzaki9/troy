@@ -1,57 +1,377 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>troy</title>
+  <title>troy · minimal ai router</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />
   <style>
-    :root { --bg:#0d1017; --panel:#151a24; --border:#232a38; --text:#d7dce5; --muted:#8b93a3; --accent:#6ea8fe; }
-    * { box-sizing:border-box; }
-    body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-    header { padding:16px 24px; border-bottom:1px solid var(--border); display:flex; gap:16px; align-items:center; }
-    header h1 { font-size:16px; margin:0; font-weight:600; letter-spacing:.5px; }
-    header h1 span { color:var(--muted); font-weight:400; }
-    main { padding:24px; display:grid; grid-template-columns: 1fr 1fr; gap:24px; max-width:1200px; margin:0 auto; }
-    section { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:16px; }
-    section.full { grid-column: 1 / -1; }
-    h2 { margin:0 0 12px; font-size:13px; text-transform:uppercase; letter-spacing:1px; color:var(--muted); }
-    table { width:100%; border-collapse:collapse; font-size:13px; }
-    th { text-align:left; color:var(--muted); font-weight:500; padding:4px 8px; border-bottom:1px solid var(--border); }
-    td { padding:4px 8px; border-bottom:1px solid var(--border); vertical-align:top; }
-    .muted { color:var(--muted); }
-    .ok { color:#4ade80; } .err { color:#f87171; }
-    input, select, button { background:#0d1017; border:1px solid var(--border); color:var(--text); border-radius:6px; padding:6px 8px; font:inherit; }
-    button { cursor:pointer; }
-    button:hover { border-color:var(--accent); }
-    form { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; align-items:end; }
-    form label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted); }
-    .tag { display:inline-block; padding:0 6px; border-radius:4px; font-size:11px; background:#1c2433; border:1px solid var(--border); }
-    .spread { display:flex; justify-content:space-between; align-items:center; }
+    :root {
+      --brand-100: #c8e1ff; --brand-200: #a5d6ff; --brand-300: #79c0ff;
+      --brand-400: #58a6ff; --brand-500: #4493f8; --brand-600: #3a80e8;
+      --brand-700: #2d6fd0; --brand-800: #2458ab; --brand-900: #1f4371;
+      --primary: var(--brand-500); --primary-hover: var(--brand-600);
+      --bg: #1a1a1a; --bg-alt: #1F1F1E; --bg-subtle: #232323;
+      --surface: #262626; --surface-2: #303030; --surface-3: #3a3a3a;
+      --sidebar: rgba(30,30,30,.85);
+      --border: #333333; --border-subtle: #2a2a2a;
+      --text: #ededed; --text-muted: #9ca3af; --text-subtle: #6b7280;
+      --danger: #ef4444; --success: #22c55e; --warning: #fbbf24; --info: #60a5fa;
+      --radius: 10px; --radius-lg: 14px;
+      --shadow-soft: 0 1px 2px rgba(0,0,0,.4);
+      --shadow-warm: 0 2px 12px -2px rgba(68,147,248,.25);
+      --shadow-elev: inset 0 1px 0 0 rgba(255,255,255,.06), 0 1px 2px rgba(0,0,0,.4), 0 16px 48px -8px rgba(0,0,0,.55);
+      --shadow-focus: 0 0 0 3px rgba(68,147,248,.3);
+      color-scheme: dark;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 var(--font-sans, 'Inter', system-ui, sans-serif); -webkit-font-smoothing: antialiased; }
+    ::selection { background: rgba(68,147,248,.25); color: var(--primary); }
+    input, select, textarea { accent-color: var(--primary); }
+    button { user-select: none; cursor: pointer; }
+    button:disabled { cursor: not-allowed; }
+    * { scrollbar-width: thin; scrollbar-color: rgba(120,120,120,.35) transparent; }
+    *::-webkit-scrollbar { width: 8px; height: 8px; }
+    *::-webkit-scrollbar-track { background: transparent; }
+    *::-webkit-scrollbar-thumb { background: rgba(120,120,120,.35); border-radius: 9999px; border: 2px solid transparent; background-clip: padding-box; }
+    *::-webkit-scrollbar-thumb:hover { background: rgba(156,163,175,.55); border: 2px solid transparent; background-clip: padding-box; }
+
+    .material-symbols-outlined { font-family: 'Material Symbols Outlined'; font-weight: normal; font-style: normal; font-size: 24px; line-height: 1; display: inline-block; white-space: nowrap; font-feature-settings: 'liga'; -webkit-font-feature-settings: 'liga'; font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+    .fill-1 { font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+
+    .app-shell { display: flex; height: 100vh; overflow: hidden; background: var(--bg); }
+    .sidebar { width: 288px; flex-shrink: 0; display: flex; flex-direction: column; border-right: 1px solid var(--border-subtle); background: rgba(38,38,38,.72); backdrop-filter: blur(20px); }
+    .side-top { display: flex; align-items: center; gap: 12px; padding: 20px 20px 16px; }
+    .traffic { display: flex; gap: 8px; }
+    .traffic i { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+    .t-red { background: #FF5F56; } .t-yellow { background: #FFBD2E; } .t-green { background: #27C93F; }
+    .logo { width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 17px; color: #fff; background: linear-gradient(135deg, var(--brand-500), var(--brand-700)); box-shadow: var(--shadow-warm); }
+    .brand-txt { font-size: 16px; font-weight: 600; letter-spacing: .5px; }
+    .brand-txt small { display: block; font-size: 11px; font-weight: 400; color: var(--text-muted); letter-spacing: 0; }
+    nav { flex: 1; padding: 8px 12px; }
+    .nav-label { padding: 12px 12px 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .1em; color: var(--text-muted); }
+    .nav-item { display: flex; align-items: center; gap: 12px; padding: 7px 12px; border-radius: 8px; color: var(--text-muted); font-size: 13px; font-weight: 500; background: none; border: none; width: 100%; text-align: left; transition: all .15s; }
+    .nav-item:hover { background: var(--surface-2); color: var(--text); }
+    .nav-item.active { background: rgba(68,147,248,.12); color: var(--brand-400); }
+    .nav-item .material-symbols-outlined { font-size: 18px; }
+    .side-foot { padding: 12px 20px; font-size: 11px; color: var(--text-subtle); }
+
+    .main { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; isolation: isolate; }
+    .main-bg-grid { position: absolute; inset: 0; z-index: -1; pointer-events: none; background-image: linear-gradient(to right, var(--primary) 1px, transparent 1px), linear-gradient(to bottom, var(--primary) 1px, transparent 1px); background-size: 40px 40px; opacity: .04; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 24px 8px; border-bottom: 1px solid var(--border-subtle); background: rgba(38,38,38,.6); backdrop-filter: blur(20px); z-index: 20; }
+    .topbar-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .page-icon { color: var(--primary); font-size: 22px; }
+    .page-title { font-size: 20px; font-weight: 600; letter-spacing: -.02em; margin: 0; }
+    .page-desc { font-size: 13px; color: var(--text-muted); margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .topbar-right { display: flex; align-items: center; gap: 8px; }
+    .proxy-pill { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-muted); background: var(--surface-2); border: 1px solid var(--border); padding: 4px 10px; border-radius: 9999px; }
+    .scroll-area { flex: 1; overflow-y: auto; padding: 24px 40px; }
+    .page-wrap { max-width: 1280px; margin: 0 auto; }
+
+    .page { display: none; flex-direction: column; gap: 24px; }
+    .page.active { display: flex; }
+
+    .seg { display: inline-grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; padding: 4px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-subtle); }
+    .seg button { border: none; background: none; color: var(--text-muted); font: 500 13px/1 Inter, system-ui, sans-serif; padding: 6px 14px; border-radius: 7px; transition: all .15s; }
+    .seg button:hover { background: var(--surface-2); color: var(--text); }
+    .seg button.active { background: var(--primary); color: #fff; box-shadow: var(--shadow-soft); }
+    .seg.sm button { padding: 5px 10px; font-size: 12px; }
+
+    .card { background: var(--surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); box-shadow: var(--shadow-soft); }
+    .card-pad { padding: 20px; }
+    .card-pad-sm { padding: 14px; }
+    .card-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+    .card-title { font-size: 15px; font-weight: 600; margin: 0; }
+    .card-icon-tile { width: 32px; height: 32px; border-radius: 10px; display: flex; align-items: center; justify-content: center; background: var(--bg); color: var(--text-muted); font-size: 18px; }
+
+    .stat-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
+    @media (max-width: 1100px) { .stat-grid { grid-template-columns: repeat(2, 1fr); } .stat-grid .stat { grid-column: span 1; } .stat-grid .stat:last-child { grid-column: span 2; } }
+    .stat { display: flex; flex-direction: column; gap: 4px; padding: 12px 16px; }
+    .stat-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); }
+    .stat-value { font-size: 24px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .stat-sub { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+
+    .topology-row { display: grid; grid-template-columns: 1fr 300px; gap: 16px; }
+    @media (max-width: 1100px) { .topology-row { grid-template-columns: 1fr; } }
+    .topo-card { position: relative; min-height: 380px; }
+    .topo-card canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+    .topo-hint { position: absolute; right: 12px; bottom: 10px; font-size: 10px; color: var(--text-subtle); pointer-events: none; }
+
+    .prov-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; margin-top: 4px; }
+    .provider-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; background: var(--surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); box-shadow: var(--shadow-soft); transition: all .15s; min-width: 0; }
+    .provider-card:hover { box-shadow: var(--shadow-warm); border-color: rgba(68,147,248,.3); cursor: pointer; }
+    .provider-card.connected { border-color: rgba(34,197,94,.35); }
+    .prov-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .prov-icon-tile { width: 32px; height: 32px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; border-radius: 8px; font-weight: 700; font-size: 12px; }
+    .prov-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .prov-sub { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-muted); }
+
+    .badge { display: inline-flex; align-items: center; gap: 6px; border-radius: 9999px; font-weight: 600; padding: 2px 8px; font-size: 10px; white-space: nowrap; }
+    .badge-default { background: var(--surface-2); color: var(--text-muted); }
+    .badge-primary { background: rgba(68,147,248,.12); color: var(--brand-400); }
+    .badge-success { background: rgba(34,197,94,.12); color: #4ade80; }
+    .badge-warning { background: rgba(250,204,21,.12); color: #facc15; }
+    .badge-error { background: rgba(239,68,68,.12); color: #f87171; }
+    .badge-info { background: rgba(96,165,250,.12); color: #93c5fd; }
+    .badge-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+    .dot-green { background: #22c55e; } .dot-amber { background: #f59e0b; } .dot-red { background: #ef4444; }
+    .dot-blue { background: #3b82f6; } .dot-gray { background: #6b7280; }
+
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; font-weight: 600; border-radius: var(--radius); border: none; padding: 0 16px; height: 36px; font-size: 14px; transition: all .15s ease-out; }
+    .btn:active { transform: scale(.97); }
+    .btn:disabled { opacity: .5; pointer-events: none; }
+    .btn-sm { height: 28px; padding: 0 12px; font-size: 12px; border-radius: 8px; }
+    .btn-primary { background: var(--brand-500); color: #fff; box-shadow: var(--shadow-soft); }
+    .btn-primary:hover { background: var(--brand-600); }
+    .btn-secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
+    .btn-secondary:hover { background: var(--surface-3); }
+    .btn-danger { background: #dc2626; color: #fff; }
+    .btn-danger:hover { background: #b91c1c; }
+    .btn-ghost { background: transparent; color: var(--text-muted); }
+    .btn-ghost:hover { background: var(--surface-2); color: var(--text); }
+    .btn-dashed { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 8px; border: 1px dashed rgba(68,147,248,.4); background: transparent; color: var(--brand-400); font-size: 12px; transition: all .15s; }
+    .btn-dashed:hover { border-color: var(--primary); background: rgba(68,147,248,.08); }
+
+    .field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+    .field-label { font-size: 12px; font-weight: 500; color: var(--text-muted); }
+    .input, .select { width: 100%; padding: 9px 12px; font-size: 13px; color: var(--text); background: var(--surface-2); border: 1px solid transparent; border-radius: 10px; transition: all .15s; }
+    .input:focus, .select:focus { outline: none; box-shadow: var(--shadow-focus); border-color: rgba(68,147,248,.4); }
+    .input::placeholder { color: rgba(156,163,175,.6); }
+    .select { -webkit-appearance: none; appearance: none; background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 30px; }
+    .select option, .input option { background: var(--surface); color: var(--text); }
+    .form-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+    .form-row .grow { flex: 1; min-width: 140px; }
+    .hint { font-size: 11px; color: var(--text-subtle); }
+
+    .toggle { position: relative; display: inline-flex; flex-shrink: 0; border-radius: 9999px; width: 44px; height: 24px; background: var(--surface-3); transition: background .2s; cursor: pointer; box-shadow: inset 0 0 0 1px rgba(0,0,0,.2); outline: none; }
+    .toggle:focus-visible { box-shadow: 0 0 0 3px rgba(68,147,248,.3); }
+    .toggle.on { background: var(--brand-500); }
+    .toggle-thumb { position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; background: #fff; border-radius: 50%; box-shadow: 0 1px 2px rgba(0,0,0,.2); transition: transform .2s; }
+    .toggle.on .toggle-thumb { transform: translateX(20px); }
+
+    .row-list { display: flex; flex-direction: column; }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,.05); transition: background .15s; }
+    .row:last-child { border-bottom: none; }
+    .row:hover { background: rgba(255,255,255,.02); }
+    .row-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .row-right { display: flex; align-items: center; gap: 8px; }
+    .row-title { font-weight: 600; }
+    .row-sub { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .key-mono { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-muted); background: var(--bg-subtle); padding: 2px 8px; border-radius: 6px; }
+
+    .combo-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 9999px; background: var(--surface-2); border: 1px solid var(--border); font-size: 12px; }
+    .combo-chain { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 12px; }
+    .chain-arrow { color: var(--text-subtle); }
+
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    thead { background: rgba(35,35,35,.5); }
+    th { text-align: left; text-transform: uppercase; font-size: 11px; font-weight: 600; letter-spacing: .05em; color: var(--text-muted); padding: 10px 16px; }
+    th.num, td.num { text-align: right; }
+    td { padding: 10px 16px; border-top: 1px solid var(--border-subtle); }
+    tbody tr:hover { background: rgba(255,255,255,.02); }
+    .empty { padding: 40px; text-align: center; color: var(--text-muted); }
+    .status-ok { color: #4ade80; }
+    .status-err { color: #f87171; }
+    code.model { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-muted); background: var(--bg-subtle); padding: 1px 6px; border-radius: 5px; }
+
+    .bar-block { display: flex; flex-direction: column; gap: 14px; }
+    .bar-head { display: flex; align-items: center; justify-content: space-between; font-size: 13px; }
+    .bar-name { font-weight: 600; display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .bar-right { font-weight: 500; flex-shrink: 0; }
+    .bar-track { height: 8px; border-radius: 9999px; overflow: hidden; background: rgba(34,197,94,.1); }
+    .bar-track > div { height: 100%; border-radius: 9999px; transition: width .3s; }
+    .bar-meta { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); }
+
+    .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--border-subtle); }
+    .setting-row:last-child { border-bottom: none; }
+    .setting-label { font-weight: 600; }
+    .setting-desc { font-size: 12px; color: var(--text-muted); }
+
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    .fade-in { animation: fadeIn .2s ease-out; }
+    .hidden { display: none !important; }
   </style>
 </head>
 <body>
-  <header>
-    <h1>troy<span> · minimal ai router</span></h1>
-    <span class="muted" id="proxyHint"></span>
-  </header>
-  <main>
-    <section class="full">
-      <div class="spread"><h2>connections</h2><button id="refreshConn">refresh</button></div>
-      <table id="connTable"><thead><tr><th>provider</th><th>priority</th><th>api key</th><th>base url</th><th></th></tr></thead><tbody></tbody></table>
-    </section>
-    <section>
-      <h2>combos</h2>
-      <div id="comboList"></div>
-    </section>
-    <section>
-      <h2>settings</h2>
-      <div id="settingsBox"></div>
-    </section>
-    <section class="full">
-      <h2>last requests</h2>
-      <table><thead><tr><th>ts</th><th>provider</th><th>model</th><th>status</th><th>ms</th></tr></thead><tbody id="logBody"></tbody></table>
-    </section>
-  </main>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="side-top">
+        <span class="traffic"><i class="t-red"></i><i class="t-yellow"></i><i class="t-green"></i></span>
+        <span class="logo">T</span>
+        <span class="brand-txt">troy<small>minimal ai router</small></span>
+      </div>
+      <nav>
+        <div class="nav-label">router</div>
+        <button class="nav-item active" data-page="usage"><span class="material-symbols-outlined">data_usage</span>Usage</button>
+        <button class="nav-item" data-page="providers"><span class="material-symbols-outlined">hub</span>Providers</button>
+        <button class="nav-item" data-page="combos"><span class="material-symbols-outlined">layers</span>Combos</button>
+        <button class="nav-item" data-page="settings"><span class="material-symbols-outlined">tune</span>Settings</button>
+      </nav>
+      <div class="side-foot"><span id="proxyHint"></span></div>
+    </aside>
+
+    <main class="main">
+      <div class="main-bg-grid"></div>
+      <header class="topbar">
+        <div class="topbar-left">
+          <span class="material-symbols-outlined page-icon" id="pageIcon">data_usage</span>
+          <div>
+            <h1 class="page-title" id="pageTitle">Usage</h1>
+            <p class="page-desc" id="pageDesc">requests, providers, latency</p>
+          </div>
+        </div>
+        <div class="topbar-right"><span class="proxy-pill" id="proxyPill"></span></div>
+      </header>
+
+      <div class="scroll-area">
+        <div class="page-wrap">
+
+          <section class="page active" id="page-usage">
+            <div><div class="seg" id="usageTabs">
+              <button class="active" data-tab="overview">Overview</button>
+              <button data-tab="details">Details</button>
+            </div></div>
+
+            <div id="usage-overview">
+              <div class="stat-grid" id="statGrid"></div>
+
+              <div class="topology-row">
+                <div class="card topo-card card-pad-sm">
+                  <div class="card-header">
+                    <h3 class="card-title">Topology</h3>
+                    <span class="badge badge-primary" id="topoBadge">idle</span>
+                  </div>
+                  <canvas id="topo"></canvas>
+                  <span class="topo-hint">drag to pan · scroll to zoom · dbl-click to fit</span>
+                </div>
+                <div class="card card-pad-sm">
+                  <div class="card-header">
+                    <h3 class="card-title">Provider health</h3>
+                    <span class="badge badge-default" id="provHealthBadge">—</span>
+                  </div>
+                  <div class="bar-block" id="providerBars"></div>
+                </div>
+              </div>
+
+              <div class="card card-pad-sm">
+                <div class="card-header">
+                  <h3 class="card-title">Recent requests</h3>
+                </div>
+                <div class="table-wrap"><table><thead><tr><th>time</th><th>provider</th><th>model</th><th>status</th><th class="num">ms</th></tr></thead><tbody id="recentBody"></tbody></table></div>
+              </div>
+            </div>
+
+            <div id="usage-details" class="hidden">
+              <div class="seg sm" id="periodPills">
+                <button data-days="0" class="active">24h</button>
+                <button data-days="1">Today</button>
+                <button data-days="7">7D</button>
+                <button data-days="30">30D</button>
+                <button data-days="0">All</button>
+              </div>
+              <div class="card card-pad-sm">
+                <div class="card-header"><h3 class="card-title">Usage by model</h3></div>
+                <div class="table-wrap"><table><thead><tr><th>model</th><th>provider</th><th class="num">requests</th><th class="num">ok</th><th class="num">avg ms</th><th>last used</th></tr></thead><tbody id="modelBody"></tbody></table></div>
+              </div>
+              <div class="card card-pad-sm">
+                <div class="card-header"><h3 class="card-title">History</h3></div>
+                <div class="table-wrap"><table><thead><tr><th>time</th><th>provider</th><th>model</th><th>status</th><th class="num">ms</th></tr></thead><tbody id="historyBody"></tbody></table></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="page" id="page-providers">
+            <div class="card card-pad-sm">
+              <div class="card-header">
+                <div class="card-icon-tile"><span class="material-symbols-outlined">hub</span></div>
+                <div>
+                  <h3 class="card-title">Providers</h3>
+                  <p class="hint" style="margin:2px 0 0">OpenAI-compatible catalog</p>
+                </div>
+                <span class="badge badge-default" id="provCountBadge">0 registered</span>
+              </div>
+              <div class="prov-grid" id="provGrid"></div>
+            </div>
+
+            <div class="card card-pad-sm">
+              <div class="card-header">
+                <h3 class="card-title">Connections</h3>
+                <span class="badge badge-success" id="connCountBadge">0 connected</span>
+              </div>
+              <div class="row-list" id="connList"></div>
+              <div class="card-pad-sm" style="padding-bottom:0">
+                <form class="form-row" id="connForm">
+                  <div class="field grow" style="min-width:130px"><label class="field-label" for="connProv">provider</label>
+                    <select class="select" id="connProv"></select></div>
+                  <div class="field grow" style="flex:2"><label class="field-label" for="connKey">api key</label>
+                    <input class="input" id="connKey" placeholder="sk-..." /></div>
+                  <div class="field" style="width:70px"><label class="field-label" for="connPrio">priority</label>
+                    <input class="input" id="connPrio" type="number" value="0" /></div>
+                  <button class="btn btn-primary" type="submit">add</button>
+                </form>
+              </div>
+            </div>
+          </section>
+
+          <section class="page" id="page-combos">
+            <div class="card card-pad-sm">
+              <div class="card-header">
+                <h3 class="card-title">Combos</h3>
+                <span class="hint">one name → ordered fallback chain</span>
+              </div>
+              <div class="row-list" id="comboList"></div>
+              <div class="card-pad-sm" style="padding-bottom:0">
+                <button class="btn-dashed" id="addComboBtn"><span class="material-symbols-outlined" style="font-size:15px">add</span>new combo</button>
+                <form class="form-row hidden" id="comboForm" style="margin-top:8px">
+                  <div class="field grow"><label class="field-label">name</label><input class="input" id="comboName" placeholder="primary" /></div>
+                  <div class="field grow" style="flex:2"><label class="field-label">models — "provider/model" space separated</label><input class="input" id="comboModels" placeholder="openai/gpt-4o-mini deepseek/deepseek-chat groq/llama-3.3-70b" /></div>
+                  <button class="btn btn-primary" type="submit">save</button>
+                </form>
+              </div>
+            </div>
+          </section>
+
+          <section class="page" id="page-settings">
+            <div class="card card-pad-sm">
+              <div class="card-header">
+                <div class="card-icon-tile"><span class="material-symbols-outlined">tune</span></div>
+                <h3 class="card-title">Routing &amp; token savers</h3>
+              </div>
+              <div class="setting-row">
+                <div>
+                  <div class="setting-label">RTK token saver</div>
+                  <div class="setting-desc">compress tool-result blocks (grep, ls, git diff, tree, find…)</div>
+                </div>
+                <button class="toggle" id="rtkToggle" role="switch" aria-checked="true"><span class="toggle-thumb"></span></button>
+              </div>
+              <div class="setting-row">
+                <div class="setting-label">Account strategy</div>
+                <div style="width:200px"><select class="select" id="strategySel"><option value="fill-first">fill-first</option><option value="round-robin">round-robin</option></select></div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-label">Caveman prompt</div>
+                <div style="width:200px"><select class="select" id="cavSel"></select></div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-label">Ponytail</div>
+                <div style="width:200px"><select class="select" id="ponySel"></select></div>
+              </div>
+              <div class="card-pad-sm" style="padding-bottom:0; text-align:right">
+                <button class="btn btn-primary btn-sm" id="saveSettings" disabled>save settings</button>
+              </div>
+            </div>
+          </section>
+
+        </div>
+      </div>
+    </main>
+  </div>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

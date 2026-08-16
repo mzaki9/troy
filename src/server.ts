@@ -2,7 +2,7 @@ import type { Server } from "bun";
 import { mkdirSync } from "node:fs";
 import { Store } from "./db";
 import { CooldownStore, handleChat, type ChatDeps } from "./route";
-import { providerIds } from "./registry";
+import { getProvider, providerIds } from "./registry";
 
 const PORT = Number(process.env.PORT ?? 20128);
 const DATA_DIR = process.env.TROY_DATA ?? "data";
@@ -62,6 +62,77 @@ function modelsList(): unknown[] {
   return out;
 }
 
+interface StatRow {
+  provider: string;
+  model: string;
+  n: number;
+  ok: number;
+  av: number;
+  last: string;
+}
+
+const STATUS_OK = "200 OK";
+
+function stats(): unknown {
+  const t = store.raw
+    .query("SELECT COUNT(*) n, SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) ok, AVG(latency_ms) av FROM usage_history")
+    .get(STATUS_OK) as { n: number; ok: number; av: number } | undefined;
+  const lats = (store.raw.query("SELECT latency_ms FROM usage_history WHERE latency_ms IS NOT NULL ORDER BY latency_ms ASC LIMIT 1000").all() as { latency_ms: number }[]).map((r) => r.latency_ms);
+  const p95 = lats.length ? lats[Math.min(lats.length - 1, Math.floor(lats.length * 0.95))] : 0;
+  const byProvider = store.raw
+    .query("SELECT provider, COUNT(*) n, SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) ok, AVG(latency_ms) av FROM usage_history GROUP BY provider ORDER BY n DESC")
+    .all(STATUS_OK) as unknown as { provider: string; n: number; ok: number; av: number }[];
+  const byModel = store.raw
+    .query(
+      "SELECT provider, model, COUNT(*) n, SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) ok, AVG(latency_ms) av, MAX(ts) last FROM usage_history GROUP BY model, provider ORDER BY n DESC"
+    )
+    .all(STATUS_OK) as unknown as StatRow[];
+  return {
+    totals: { requests: t?.n ?? 0, ok: t?.ok ?? 0, fail: (t?.n ?? 0) - (t?.ok ?? 0), avg_ms: Math.round(t?.av ?? 0), p95_ms: Math.round(p95) },
+    byProvider,
+    byModel: byModel.map((r) => ({ provider: r.provider, model: r.model, requests: r.n, ok: r.ok, avg_ms: Math.round(r.av), last: r.last })),
+  };
+}
+
+function topology(windowS: number): unknown {
+  const since = new Date(Date.now() - windowS * 1000).toISOString();
+  const rows = store.raw.query("SELECT provider, ts, status FROM usage_history WHERE ts >= ?").all(since) as { provider: string; ts: string; status: string }[];
+  const agg = new Map<string, { count: number; ok: number; last: number; lastOk: boolean }>();
+  let globalLast = 0;
+  let lastProvider = "";
+  for (const r of rows) {
+    const ts = Date.parse(r.ts);
+    const a = agg.get(r.provider) ?? { count: 0, ok: 0, last: 0, lastOk: false };
+    a.count += 1;
+    if (r.status === STATUS_OK) a.ok += 1;
+    if (ts > a.last) {
+      a.last = ts;
+      a.lastOk = r.status === STATUS_OK;
+    }
+    if (ts > globalLast) {
+      globalLast = ts;
+      lastProvider = r.provider;
+    }
+    agg.set(r.provider, a);
+  }
+  const nowMs = Date.now();
+  const providers = [...agg.entries()].map(([id, a]) => {
+    const active = nowMs - a.last <= 10_000;
+    const state = active ? "active" : a.ok < a.count ? "error" : id === lastProvider ? "last" : "idle";
+    return { id, label: id, state, count: a.count, ok: a.ok };
+  });
+  return { activeCount: providers.filter((p) => p.state === "active").length, providers };
+}
+
+function providerCatalog(): unknown[] {
+  const counts = new Map<string, number>();
+  for (const c of store.listConnections()) {
+    counts.set(c.provider, (counts.get(c.provider) ?? 0) + (c.is_active === 1 ? 1 : 0));
+  }
+  return providerIds().map((id) => ({ id, connected: counts.get(id) ?? 0 }));
+}
+
+
 async function handleChatRequest(request: Request, server: { timeout: (req: Request, ms: number) => void }): Promise<Response> {
   const body = await readBody(request);
   if (!body) return json({ error: { message: "Invalid JSON body", type: "invalid_request_error" } }, 400);
@@ -110,6 +181,19 @@ const server: Server<undefined> = Bun.serve({
       return json({ object: "list", data: modelsList() });
     }
 
+    if (request.method === "GET" && path === "/api/topology") {
+      const windowS = Math.min(3600, Math.max(5, Number(url.searchParams.get("window") ?? 60)));
+      return json(topology(windowS));
+    }
+
+    if (request.method === "GET" && path === "/api/stats") {
+      return json(stats());
+    }
+
+    if (request.method === "GET" && path === "/api/providers") {
+      return json(providerCatalog());
+    }
+
     if (path === "/api/settings") {
       if (request.method === "GET") return json(settings);
       if (request.method === "PUT") {
@@ -133,7 +217,7 @@ const server: Server<undefined> = Bun.serve({
               return json({ error: `combo model must be 'provider/model', got: ${m}` }, 400);
             }
             const [prov] = m.split("/");
-            if (!providerIds().includes(prov) && !PROVIDERS.some((p) => p.aliases.includes(prov))) {
+            if (!getProvider(prov)) {
               return json({ error: `unknown provider: ${prov}` }, 400);
             }
           }
