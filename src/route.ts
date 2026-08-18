@@ -242,7 +242,13 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
       lastStatus = 402;
       continue;
     }
-    const accounts = deps.store.listConnections(provider);
+    let accounts = deps.store.listConnections(provider);
+    if (def.auth === "none" && accounts.length === 0) {
+      // keyless providers (opencode zen free tier) need no stored key — route without one
+      accounts = [
+        { id: `${provider}-keyless`, provider, api_key: "", name: null, base_url: null, extra: "{}", priority: 0, is_active: 1, created_at: "" } as Connection,
+      ];
+    }
     const excluded = new Set<string>();
 
     while (true) {

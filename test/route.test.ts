@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Store } from "../src/db";
 import { CooldownStore, handleChat, type ChatDeps, type LogRow } from "../src/route";
+import { registerCustomProvider, unregisterCustomProvider } from "../src/registry";
 
 interface StubBehavior {
   status: number;
@@ -210,6 +211,22 @@ describe("opencode free gate", () => {
     const ctx = makeDeps();
     const res = await handleChat({ model: "opencode/some-unknown-model" }, ctx.deps);
     expect(res.status).toBe(402);
+  });
+
+  test("keyless provider works with no stored connection", async () => {
+    behaviors.set("", { status: 200, body: JSON.stringify({ ok: true }) });
+    const ctx = makeDeps();
+    registerCustomProvider({ id: "keyless-test", aliases: ["keyless-test"], name: "Keyless", baseUrl: stubUrl, auth: "none" });
+    try {
+      const res = await handleChat({ model: "keyless-test/mimo", messages: [] }, ctx.deps);
+      expect(res.status).toBe(200);
+      const payload = lastPayload as { model?: string };
+      expect(payload.model).toBe("mimo");
+      expect(ctx.logs).toHaveLength(1);
+      expect(ctx.logs[0].status).toBe("200 OK");
+    } finally {
+      unregisterCustomProvider("keyless-test");
+    }
   });
 });
 
