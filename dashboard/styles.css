@@ -89,6 +89,13 @@
     /* ss03 — character-level brand signature across all text roles */
     font-feature-settings: "ss03";
   }
+
+  /* faint ink dot grid on the cream canvas — owns the app frame */
+  .dot-grid {
+    background-color: var(--background);
+    background-image: radial-gradient(circle, rgba(0, 0, 0, 0.1) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
   ::selection {
     background: var(--aloe);
     color: #000000;

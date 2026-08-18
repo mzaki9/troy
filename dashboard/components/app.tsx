@@ -11,7 +11,7 @@ export default function App() {
   const [page, setPage] = useState<PageId>("usage");
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background text-foreground">
+    <div className="dot-grid flex h-screen overflow-hidden text-foreground">
       <Sidebar page={page} onNavigate={setPage} />
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Topbar page={page} />

@@ -9,6 +9,11 @@ const FILE: Record<string, string> = {
   venice: "providers/venice.png",
   "glm-cn": "providers/glm-cn.png",
   "xiaomi-mimo": "providers/xiaomi-mimo.png",
+  // provider ids that outgrew their original brand name — reuse the existing logo
+  zai: "providers/glm.svg",
+  "zai-cn": "providers/glm-cn.png",
+  alibaba: "providers/alims-intl.svg",
+  "alibaba-token-plan": "providers/alitp-intl.svg",
 };
 
 export function providerIconSrc(id: string): string {
