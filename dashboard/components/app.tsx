@@ -13,9 +13,9 @@ export default function App() {
   return (
     <div className="flex h-screen overflow-hidden bg-background text-foreground">
       <Sidebar page={page} onNavigate={setPage} />
-      <main className="flex min-w-0 flex-1 flex-col">
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Topbar page={page} />
-        <div className="flex-1 overflow-y-auto p-5 lg:p-8">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5 lg:p-8">
           <div className="mx-auto max-w-7xl space-y-5">
             {page === "usage" && <UsagePage />}
             {page === "providers" && <ProvidersPage />}

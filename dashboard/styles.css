@@ -77,10 +77,15 @@
     @apply border-border outline-ring/30;
   }
   html {
+    height: 100%;
+    /* the app frame owns all scrolling — never let page content flow the document */
+    overflow: hidden;
     color-scheme: light;
   }
   body {
     @apply bg-background text-foreground font-sans antialiased;
+    height: 100%;
+    overflow: hidden;
     /* ss03 — character-level brand signature across all text roles */
     font-feature-settings: "ss03";
   }
