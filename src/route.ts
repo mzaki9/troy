@@ -3,6 +3,7 @@ import type { Store, Connection } from "./db";
 import { compressMessages } from "./rtk";
 import { injectCaveman, injectPonytail, type CavemanLevel, type PonytailLevel } from "./inject";
 import { isReasoningModel, resolveEffortAlias } from "./reasoning";
+import { commandCodeReply, wrapCommandCode } from "./commandcode";
 
 const BACKOFF_CONFIG = { base: 2000, max: 300000, maxLevel: 15 };
 const TRANSIENT_COOLDOWN_MS = 30000;
@@ -187,11 +188,12 @@ function passthrough(res: Response, stream: boolean): Response {
 }
 
 async function forward(body: Record<string, unknown>, conn: Connection, def: Provider, signal?: AbortSignal): Promise<Response> {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { "content-type": "application/json" };
   if (def.auth === "bearer") headers.authorization = `Bearer ${conn.api_key}`;
   else if (def.auth === "raw") headers["x-api-key"] = conn.api_key;
-  if (body.stream) headers.accept = "text/event-stream";
+  if (body.stream || def.id === "command-code") headers.accept = "text/event-stream";
   for (const [k, v] of Object.entries(def.headers ?? {})) headers[k] = v;
+  if (def.id === "command-code") headers["x-session-id"] = crypto.randomUUID();
   return fetch(buildBaseUrl(def, conn), {
     method: "POST",
     headers,
@@ -219,6 +221,7 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
   const stream = body.stream === true;
   let lastError: string | null = null;
   let lastStatus = 502;
+  let lastRaw: { body: string; status: number } | null = null;
 
   for (const spec of chain) {
     const { provider, model: rawModel } = parseModelStr(spec);
@@ -266,9 +269,13 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
       }
       const conn = deps.cooldowns.pick(eligible, `${provider}/${model}`, deps.strategy);
 
+      // command-code speaks the alpha/generate wire format, not chat completions
+      const cc = def.id === "command-code";
+      const wrapped = cc ? wrapCommandCode(effBody) : null;
+
       let res: Response;
       try {
-        res = await forward(effBody, conn, def, deps.signal);
+        res = await forward(wrapped?.body ?? effBody, conn, def, deps.signal);
       } catch (err) {
         const msg = err instanceof Error ? err.message : "network error";
         deps.cooldowns.fail(conn.id, model, 0, msg);
@@ -281,10 +288,12 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
       if (res.ok) {
         deps.cooldowns.success(conn.id, model);
         deps.onLog({ provider, model, combo: combo?.name, status: "200 OK", latency_ms: now() - t0 });
+        if (cc) return commandCodeReply(res, stream, model, wrapped!.toolMap, deps.signal);
         return passthrough(res, stream);
       }
 
       const bodyText = await res.text().catch(() => "");
+      if (cc) lastRaw = { body: bodyText, status: res.status };
       deps.cooldowns.fail(conn.id, model, res.status, bodyText);
       lastError = bodyText || res.statusText || `HTTP ${res.status}`;
       lastStatus = res.status;
@@ -297,6 +306,11 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
   const retryAfter = deps.cooldowns.earliestRetryAfter();
   const headers: Record<string, string> = { "content-type": "application/json", "access-control-allow-origin": "*" };
   if (retryAfter !== null && retryAfter > now()) headers["retry-after"] = String(Math.max(1, Math.ceil((retryAfter - now()) / 1000)));
+  // command-code: surface the upstream error body/status verbatim (CC error
+  // semantics survive — cooldown bookkeeping above still happens)
+  if (lastRaw !== null && lastRaw.status >= 400) {
+    return new Response(lastRaw.body, { status: lastRaw.status, headers });
+  }
   return new Response(
     JSON.stringify({ error: { message: lastError, type: "server_error", code: "bad_gateway" } }),
     { status: lastStatus, headers }

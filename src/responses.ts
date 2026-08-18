@@ -68,6 +68,8 @@ interface ChatUsage {
   prompt_tokens?: number;
   completion_tokens?: number;
   total_tokens?: number;
+  prompt_tokens_details?: { cached_tokens?: number };
+  completion_tokens_details?: { reasoning_tokens?: number };
 }
 
 /** chat completions response → responses response. */
@@ -106,8 +108,8 @@ export function toResponses(res: unknown, model: string): Record<string, unknown
       input_tokens: u.prompt_tokens ?? 0,
       output_tokens: u.completion_tokens ?? 0,
       total_tokens: u.total_tokens ?? 0,
-      input_tokens_details: { cached_tokens: 0 },
-      output_tokens_details: { reasoning_tokens: 0 },
+      input_tokens_details: { cached_tokens: u.prompt_tokens_details?.cached_tokens ?? 0 },
+      output_tokens_details: { reasoning_tokens: u.completion_tokens_details?.reasoning_tokens ?? 0 },
     };
   }
   return out;
@@ -229,8 +231,8 @@ function finish(st: StreamState, events: Record<string, unknown>[]) {
       input_tokens: u.prompt_tokens ?? 0,
       output_tokens: u.completion_tokens ?? 0,
       total_tokens: u.total_tokens ?? 0,
-      input_tokens_details: { cached_tokens: 0 },
-      output_tokens_details: { reasoning_tokens: 0 },
+      input_tokens_details: { cached_tokens: u.prompt_tokens_details?.cached_tokens ?? 0 },
+      output_tokens_details: { reasoning_tokens: u.completion_tokens_details?.reasoning_tokens ?? 0 },
     };
   }
   events.push({ type: "response.completed", response });
