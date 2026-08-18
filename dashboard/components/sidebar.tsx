@@ -1,16 +1,15 @@
-import { Blocks, Gauge, Layers, Network, Settings2 } from "lucide-react";
+import { Gauge, Layers, Network, Settings2 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "../lib/utils";
 
 export const PAGES: { id: PageId; label: string; desc: string; icon: LucideIcon }[] = [
   { id: "usage", label: "Usage", desc: "requests, providers, latency", icon: Gauge },
   { id: "providers", label: "Providers", desc: "OpenAI-compatible catalog + connections", icon: Network },
-  { id: "models", label: "Models", desc: "desired catalog + thinking depth", icon: Blocks },
   { id: "combos", label: "Combos", desc: "ordered fallback chains", icon: Layers },
   { id: "settings", label: "Settings", desc: "routing & token savers", icon: Settings2 },
 ];
 
-export type PageId = "usage" | "providers" | "models" | "combos" | "settings";
+export type PageId = "usage" | "providers" | "combos" | "settings";
 
 export function Sidebar({
   page,

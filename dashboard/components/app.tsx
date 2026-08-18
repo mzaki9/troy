@@ -4,7 +4,6 @@ import type { PageId } from "./sidebar";
 import { Topbar } from "./topbar";
 import { UsagePage } from "./pages/usage";
 import { ProvidersPage } from "./pages/providers";
-import { ModelsPage } from "./pages/models";
 import { CombosPage } from "./pages/combos";
 import { SettingsPage } from "./pages/settings";
 
@@ -20,7 +19,6 @@ export default function App() {
           <div className="mx-auto max-w-7xl space-y-5">
             {page === "usage" && <UsagePage />}
             {page === "providers" && <ProvidersPage />}
-            {page === "models" && <ModelsPage />}
             {page === "combos" && <CombosPage />}
             {page === "settings" && <SettingsPage />}
           </div>

@@ -1,9 +1,9 @@
 import { useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import { ArrowLeft, BookmarkPlus, Brain, Check, ChevronsUpDown, Copy, Eye, EyeOff, KeyRound, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, Brain, Check, ChevronsUpDown, Copy, Eye, EyeOff, KeyRound, Plus, Trash2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { api, mask, useApi } from "../api";
-import type { Connection, ProviderCat } from "../api";
+import type { Connection, ProviderCat, SavedModel } from "../api";
 import { ProviderIcon } from "../provider-icon";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "../ui/alert-dialog";
 import { Badge } from "../ui/badge";
@@ -87,48 +87,6 @@ export function ProvidersPage() {
 
 function Overview({ onOpen }: { onOpen: (id: string) => void }) {
   const providers = useApi<ProviderCat[]>("/api/providers");
-  const connections = useApi<Connection[]>("/api/connections");
-
-  // add-connection form state
-  const [provSel, setProvSel] = useState("");
-  const [key, setKey] = useState("");
-  const [prio, setPrio] = useState("0");
-  const [busy, setBusy] = useState(false);
-
-  const toggle = async (c: Connection) => {
-    await api(`/api/connections/${c.id}`, {
-      method: "PUT",
-      body: JSON.stringify({ is_active: c.is_active ? 0 : 1 }),
-    });
-    connections.refetch();
-    providers.refetch();
-  };
-
-  const remove = async (c: Connection) => {
-    await api(`/api/connections/${c.id}`, { method: "DELETE" });
-    connections.refetch();
-    providers.refetch();
-  };
-
-  const addConnection = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!provSel || !key.trim()) return;
-    setBusy(true);
-    try {
-      await api("/api/connections", {
-        method: "POST",
-        body: JSON.stringify({ provider: provSel, api_key: key.trim(), priority: Number(prio || 0) }),
-      });
-      setKey("");
-      setPrio("0");
-      connections.refetch();
-      providers.refetch();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const connected = (connections.data ?? []).filter((c) => c.is_active).length;
 
   return (
     <div className="space-y-4">
@@ -144,7 +102,7 @@ function Overview({ onOpen }: { onOpen: (id: string) => void }) {
             </div>
           </div>
           <CardDescription>
-            OpenAI-compatible chat-completions catalog — click a provider for its keys
+            OpenAI-compatible chat-completions catalog — click a provider for its keys and models
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -192,120 +150,6 @@ function Overview({ onOpen }: { onOpen: (id: string) => void }) {
             </div>
           )}
         </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="flex-row items-center justify-between">
-          <CardTitle>Connections</CardTitle>
-          <Badge variant="secondary">
-            {connections.data ? `${connected} connected` : "…"}
-          </Badge>
-        </CardHeader>
-        <CardContent>
-          {!connections.data ? (
-            <div className="space-y-2">
-              {Array.from({ length: 3 }).map((_, i) => (
-                <Skeleton key={i} className="h-10 w-full" />
-              ))}
-            </div>
-          ) : connections.data.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">
-              No connections yet — add a provider key above.
-            </p>
-          ) : (
-            <div className="divide-y divide-border/60">
-              {connections.data.map((c) => (
-                <div key={c.id} className="flex items-center justify-between gap-3 py-3">
-                  <div className="flex min-w-0 flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => onOpen(c.provider)}
-                      className="flex items-center gap-1.5 text-sm font-medium hover:text-primary"
-                    >
-                      <ProviderIcon id={c.provider} className="size-5 rounded" />
-                      {c.provider}
-                    </button>
-                    {c.name ? (
-                      <span className="rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[11px] text-primary">
-                        {c.name}
-                      </span>
-                    ) : null}
-                    <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
-                      #{c.priority}
-                    </span>
-                    <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
-                      {mask(c.api_key)}
-                    </span>
-                    {c.base_url ? (
-                      <span className="max-w-56 truncate font-mono text-[11px] text-muted-foreground">
-                        {c.base_url}
-                      </span>
-                    ) : null}
-                  </div>
-                  <div className="flex shrink-0 items-center gap-1.5">
-                    <Switch
-                      checked={c.is_active === 1}
-                      onCheckedChange={() => toggle(c)}
-                      aria-label={`toggle ${c.provider}`}
-                    />
-                    <DeleteDialog
-                      title={`Remove ${c.provider} key?`}
-                      description="This connection will be removed and can no longer serve requests."
-                      onConfirm={() => remove(c)}
-                    >
-                      <Button variant="ghost" size="icon" aria-label={`remove ${c.provider} key`} className="hover:text-destructive">
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </DeleteDialog>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-
-        <form
-          onSubmit={addConnection}
-          className="flex flex-wrap items-end gap-3 border-t px-8 pt-6"
-        >
-          <div className="flex min-w-28 flex-1 flex-col gap-1.5">
-            <Label htmlFor="connProv">provider</Label>
-            <Select value={provSel} onValueChange={setProvSel}>
-              <SelectTrigger id="connProv" className="w-full">
-                <SelectValue placeholder="Select provider" />
-              </SelectTrigger>
-              <SelectContent>
-                {(providers.data ?? []).map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.id}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex min-w-40 flex-[2] flex-col gap-1.5">
-            <Label htmlFor="connKey">api key</Label>
-            <Input
-              id="connKey"
-              value={key}
-              onChange={(e) => setKey(e.target.value)}
-              placeholder="sk-..."
-            />
-          </div>
-          <div className="flex w-24 flex-col gap-1.5">
-            <Label htmlFor="connPrio">priority</Label>
-            <Input
-              id="connPrio"
-              type="number"
-              value={prio}
-              onChange={(e) => setPrio(e.target.value)}
-            />
-          </div>
-          <Button type="submit" disabled={!provSel || !key.trim() || busy}>
-            <Plus className="size-4" />
-            add
-          </Button>
-        </form>
       </Card>
     </div>
   );
@@ -477,19 +321,26 @@ function ProviderDetail({ id, onBack }: { id: string; onBack: () => void }) {
   );
 }
 
-/** Live model list fetched from the provider's /models endpoint. */
+/** Live model catalog for a provider — picking a model saves it as your choice. */
 function ModelsCard({ providerId }: { providerId: string }) {
+  const saved = useApi<SavedModel[]>("/api/models");
   const [models, setModels] = useState<{ id: string; name: string; thinking?: boolean }[] | null>(null);
   const [url, setUrl] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [selected, setSelected] = useState<{ id: string; name: string; thinking?: boolean } | null>(null);
   const [open, setOpen] = useState(false);
-  const [saved, setSaved] = useState<Set<string>>(new Set());
 
-  const saveModel = async (id: string) => {
+  const mine = (saved.data ?? []).filter((m) => m.provider === providerId);
+  const chosen = new Set(mine.map((m) => m.spec));
+
+  const choose = async (id: string) => {
     await api("/api/models", { method: "POST", body: JSON.stringify({ provider: providerId, model: id }) });
-    setSaved((s) => new Set(s).add(id));
+    saved.refetch();
+  };
+
+  const unchoose = async (spec: string) => {
+    await api(`/api/models/${encodeURIComponent(spec)}`, { method: "DELETE" });
+    saved.refetch();
   };
 
   const fetchModels = async () => {
@@ -518,15 +369,18 @@ function ModelsCard({ providerId }: { providerId: string }) {
       <CardHeader className="gap-1">
         <div className="flex items-center justify-between gap-3">
           <CardTitle className="text-sm">models</CardTitle>
-          <Button variant="outline" size="sm" onClick={fetchModels} disabled={busy}>
-            {busy ? "fetching…" : "fetch models"}
-          </Button>
+          <div className="flex items-center gap-2">
+            {mine.length > 0 ? <Badge variant="secondary">{mine.length} chosen</Badge> : null}
+            <Button variant="outline" size="sm" onClick={fetchModels} disabled={busy}>
+              {busy ? "fetching…" : "fetch models"}
+            </Button>
+          </div>
         </div>
         <CardDescription className="font-mono text-[11px]">
-          {url ?? "fetched live from the provider — copy a model to use it"}
+          {url ?? "pick the models you use with this provider — they save automatically"}
         </CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-3">
         {err ? (
           <p className="text-xs text-red-600">
             fetch failed: {err}
@@ -537,102 +391,95 @@ function ModelsCard({ providerId }: { providerId: string }) {
         ) : models.length === 0 ? (
           <p className="text-xs text-muted-foreground">no models returned.</p>
         ) : (
-          <>
-            <Popover open={open} onOpenChange={setOpen}>
-              <PopoverTrigger asChild>
-                <Button
-                  variant="outline"
-                  role="combobox"
-                  aria-expanded={open}
-                  className="w-full justify-between font-mono text-xs"
-                >
-                  {selected ? selected.id : "choose a model…"}
-                  <ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent
-  className="w-[min(380px,calc(100vw-2rem))] p-0"
-  align="start"
-  side="bottom"
-  avoidCollisions={false}
->
-                <Command>
-                  <CommandInput placeholder="search models…" />
-                  <CommandList>
-                    <CommandEmpty>no model found.</CommandEmpty>
-                    <CommandGroup>
-                      {models.slice(0, 500).map((m) => (
-                        <CommandItem
-                          key={m.id}
-                          value={m.id}
-                          onSelect={() => {
-                            setSelected(m);
-                            setOpen(false);
-                          }}
-                        >
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2">
-                              <p className="truncate font-mono text-xs">{m.id}</p>
-                              {m.thinking ? (
-                                <Badge variant="secondary" className="shrink-0 px-2 py-0.5 text-[10px] font-medium">
-                                  <Brain className="size-3" />
-                                  thinking
-                                </Badge>
-                              ) : null}
-                            </div>
-                            {m.name !== m.id ? (
-                              <p className="truncate text-[11px] text-muted-foreground">{m.name}</p>
+          <Popover open={open} onOpenChange={setOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                role="combobox"
+                aria-expanded={open}
+                className="w-full justify-between font-mono text-xs"
+              >
+                {chosen.size > 0 ? `${chosen.size} chosen — add more…` : "choose a model…"}
+                <ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              className="w-[min(380px,calc(100vw-2rem))] p-0"
+              align="start"
+              side="bottom"
+              avoidCollisions={false}
+            >
+              <Command>
+                <CommandInput placeholder="search models…" />
+                <CommandList>
+                  <CommandEmpty>no model found.</CommandEmpty>
+                  <CommandGroup>
+                    {models.slice(0, 500).map((m) => (
+                      <CommandItem
+                        key={m.id}
+                        value={m.id}
+                        onSelect={() => {
+                          choose(m.id);
+                        }}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <p className="truncate font-mono text-xs">{m.id}</p>
+                            {m.thinking ? (
+                              <Badge variant="secondary" className="shrink-0 px-2 py-0.5 text-[10px] font-medium">
+                                <Brain className="size-3" />
+                                thinking
+                              </Badge>
                             ) : null}
                           </div>
-                          <Check
-                            className={cn(
-                              "size-4 shrink-0",
-                              selected?.id === m.id ? "opacity-100" : "opacity-0"
-                            )}
-                          />
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
-            {selected ? (
-              <div className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="truncate font-mono text-xs">{selected.id}</p>
-                    {selected.thinking ? (
-                      <Badge variant="secondary" className="px-2 py-0.5 text-[10px] font-medium">
-                        <Brain className="size-3" />
-                        thinking
-                      </Badge>
-                    ) : null}
-                  </div>
-                  {selected.name !== selected.id ? (
-                    <p className="truncate text-[11px] text-muted-foreground">{selected.name}</p>
+                          {m.name !== m.id ? (
+                            <p className="truncate text-[11px] text-muted-foreground">{m.name}</p>
+                          ) : null}
+                        </div>
+                        <Check
+                          className={cn(
+                            "size-4 shrink-0",
+                            chosen.has(`${providerId}/${m.id}`) ? "opacity-100" : "opacity-0"
+                          )}
+                        />
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                </CommandList>
+              </Command>
+            </PopoverContent>
+          </Popover>
+        )}
+
+        {mine.length > 0 ? (
+          <div className="divide-y divide-border/60 rounded-md border border-border">
+            {mine.map((m) => (
+              <div key={m.spec} className="flex items-center justify-between gap-3 px-3 py-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="truncate font-mono text-xs">{m.model}</span>
+                  {m.thinking ? (
+                    <Badge variant="secondary" className="shrink-0 px-2 py-0.5 text-[10px] font-medium">
+                      <Brain className="size-3" />
+                      thinking
+                    </Badge>
                   ) : null}
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
+                  <CopyButton what={`model:${m.spec}`} text={m.spec} label="copy provider/model" />
                   <Button
                     variant="ghost"
                     size="icon"
-                    aria-label={`save ${selected.id} to desired models`}
-                    className={saved.has(selected.id) ? "text-emerald-600" : "hover:text-foreground"}
-                    onClick={() => saveModel(selected.id)}
+                    aria-label={`remove ${m.spec}`}
+                    className="hover:text-destructive"
+                    onClick={() => unchoose(m.spec)}
                   >
-                    {saved.has(selected.id) ? <Check className="size-4" /> : <BookmarkPlus className="size-4" />}
+                    <Trash2 className="size-4" />
                   </Button>
-                  <CopyButton
-                    what={`model:${providerId}/${selected.id}`}
-                    text={`${providerId}/${selected.id}`}
-                    label="copy provider/model"
-                  />
                 </div>
               </div>
-            ) : null}
-          </>
-        )}
+            ))}
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   );
