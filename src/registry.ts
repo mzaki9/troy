@@ -28,6 +28,7 @@ export const PROVIDERS: Provider[] = [
   { id: "together", aliases: ["together"], baseUrl: "https://api.together.xyz/v1/chat/completions", auth: "bearer" },
   { id: "nvidia", aliases: ["nvidia"], baseUrl: "https://integrate.api.nvidia.com/v1/chat/completions", auth: "bearer" },
   { id: "cerebras", aliases: ["cerebras"], baseUrl: "https://api.cerebras.ai/v1/chat/completions", auth: "bearer" },
+  { id: "command-code", aliases: ["command-code", "cmd"], baseUrl: "https://api.commandcode.ai/alpha/generate", modelsUrl: "https://api.commandcode.ai/provider/v1/models", auth: "bearer" }, /* alpha/generate works on every subscription tier — /provider/v1/chat/completions 403s on free/basic (same call OmniRoute made) */
   { id: "fireworks", aliases: ["fireworks"], baseUrl: "https://api.fireworks.ai/inference/v1/chat/completions", auth: "bearer", modelsUrl: "https://api.fireworks.ai/v1/accounts/fireworks/models?filter=supports_serverless=true" },
   { id: "siliconflow", aliases: ["siliconflow"], baseUrl: "https://api.siliconflow.com/v1/chat/completions", auth: "bearer" },
   { id: "hyperbolic", aliases: ["hyperbolic", "hyp"], baseUrl: "https://api.hyperbolic.xyz/v1/chat/completions", auth: "bearer" },

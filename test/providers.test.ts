@@ -66,10 +66,14 @@ describe("registry invariants — every provider", () => {
   });
 
   test("valid chat-completions endpoint + auth + placeholders", () => {
+    /* providers whose endpoint is OpenAI-compatible but not at /chat/completions */
+    const NON_STANDARD = new Set(["command-code" /* /alpha/generate — works on every tier */]);
     for (const p of PROVIDERS) {
       expect(() => new URL(p.baseUrl), `${p.id} baseUrl parses`).not.toThrow();
       expect(p.baseUrl.startsWith("http"), `${p.id} baseUrl scheme`).toBe(true);
-      expect(p.baseUrl.endsWith("/chat/completions"), `${p.id} must end /chat/completions`).toBe(true);
+      if (!NON_STANDARD.has(p.id)) {
+        expect(p.baseUrl.endsWith("/chat/completions"), `${p.id} must end /chat/completions`).toBe(true);
+      }
       expect(["bearer", "raw", "none"]).toContain(p.auth);
       for (const ph of p.placeholders ?? []) {
         expect(p.baseUrl.includes(`{${ph}}`), `${p.id} baseUrl missing {${ph}}`).toBe(true);
