@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { ArrowLeft, Brain, Check, ChevronsUpDown, Copy, Eye, EyeOff, KeyRound, Plus, Trash2 } from "lucide-react";
 import { cn } from "../../lib/utils";
@@ -321,13 +321,12 @@ function ProviderDetail({ id, onBack }: { id: string; onBack: () => void }) {
   );
 }
 
-/** Live model catalog for a provider — picking a model saves it as your choice. */
+/** Live model catalog for a provider — auto-fetched, picking a model saves it as your choice. */
 function ModelsCard({ providerId }: { providerId: string }) {
   const saved = useApi<SavedModel[]>("/api/models");
   const [models, setModels] = useState<{ id: string; name: string; thinking?: boolean }[] | null>(null);
   const [url, setUrl] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
 
   const mine = (saved.data ?? []).filter((m) => m.provider === providerId);
@@ -344,7 +343,6 @@ function ModelsCard({ providerId }: { providerId: string }) {
   };
 
   const fetchModels = async () => {
-    setBusy(true);
     setErr(null);
     try {
       const res = await api(`/api/providers/${providerId}/models`);
@@ -359,22 +357,20 @@ function ModelsCard({ providerId }: { providerId: string }) {
       }
     } catch (e2) {
       setErr(e2 instanceof Error ? e2.message : String(e2));
-    } finally {
-      setBusy(false);
     }
   };
+
+  useEffect(() => {
+    fetchModels();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [providerId]);
 
   return (
     <Card>
       <CardHeader className="gap-1">
         <div className="flex items-center justify-between gap-3">
           <CardTitle className="text-sm">models</CardTitle>
-          <div className="flex items-center gap-2">
-            {mine.length > 0 ? <Badge variant="secondary">{mine.length} chosen</Badge> : null}
-            <Button variant="outline" size="sm" onClick={fetchModels} disabled={busy}>
-              {busy ? "fetching…" : "fetch models"}
-            </Button>
-          </div>
+          {mine.length > 0 ? <Badge variant="secondary">{mine.length} chosen</Badge> : null}
         </div>
         <CardDescription className="font-mono text-[11px]">
           {url ?? "pick the models you use with this provider — they save automatically"}
@@ -387,7 +383,7 @@ function ModelsCard({ providerId }: { providerId: string }) {
             <span className="text-muted-foreground"> — add a key first? most providers require one.</span>
           </p>
         ) : models === null ? (
-          <p className="text-xs text-muted-foreground">click “fetch models” to load the available models.</p>
+          <p className="text-xs text-muted-foreground">fetching catalog…</p>
         ) : models.length === 0 ? (
           <p className="text-xs text-muted-foreground">no models returned.</p>
         ) : (
