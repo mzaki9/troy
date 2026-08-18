@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "../../lib/utils";
 import { Badge } from "../ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
@@ -193,18 +193,37 @@ function ModelTable({ rows }: { rows?: StatRow[] }) {
 
 function PeriodPills() {
   const [period, setPeriod] = useState("24h");
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const btnRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const [ind, setInd] = useState<{ left: number; width: number } | null>(null);
   const pills = ["24h", "Today", "7D", "30D", "All"];
+
+  useEffect(() => {
+    const btn = btnRefs.current[period];
+    if (!btn) return;
+    setInd({ left: btn.offsetLeft, width: btn.offsetWidth });
+  }, [period]);
+
   return (
-    <div className="inline-flex w-fit rounded-full border bg-white p-1">
+    <div ref={wrapRef} className="relative inline-flex w-fit rounded-full border bg-white p-1">
+      <span
+        aria-hidden="true"
+        className={cn(
+          "pointer-events-none absolute rounded-full bg-primary transition-[left,width] duration-[120ms] ease-out motion-reduce:transition-none",
+          ind ? "opacity-100" : "opacity-0"
+        )}
+        style={ind ? { left: ind.left, top: 4, width: ind.width, height: "calc(100% - 8px)" } : undefined}
+      />
       {pills.map((p) => (
         <button
           key={p}
+          ref={(el) => {
+            btnRefs.current[p] = el;
+          }}
           onClick={() => setPeriod(p)}
           className={cn(
-            "rounded-full px-4 py-1.5 text-xs font-medium transition-colors",
-            period === p
-              ? "bg-primary text-primary-foreground"
-              : "text-muted-foreground hover:text-foreground"
+            "relative rounded-full px-4 py-1.5 text-xs font-medium transition-colors",
+            period === p ? "text-primary-foreground" : "text-muted-foreground hover:text-foreground"
           )}
         >
           {p}
@@ -232,7 +251,7 @@ export function UsagePage() {
         <TabsTrigger value="details">Details</TabsTrigger>
       </TabsList>
 
-      <TabsContent value="overview" className="space-y-4">
+      <TabsContent value="overview" className="view-switch space-y-4">
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
           {!t ? (
             <StatSkeletons />
@@ -310,7 +329,7 @@ export function UsagePage() {
         </Card>
       </TabsContent>
 
-      <TabsContent value="details" className="space-y-4">
+      <TabsContent value="details" className="view-switch space-y-4">
         <PeriodPills />
 
         <Card>

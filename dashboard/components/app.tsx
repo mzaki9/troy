@@ -16,7 +16,7 @@ export default function App() {
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Topbar page={page} />
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5 lg:p-8">
-          <div className="mx-auto max-w-7xl space-y-5">
+          <div key={page} className="view-switch mx-auto max-w-7xl space-y-5">
             {page === "usage" && <UsagePage />}
             {page === "providers" && <ProvidersPage />}
             {page === "combos" && <CombosPage />}

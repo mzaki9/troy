@@ -36,8 +36,8 @@
 }
 
 @theme inline {
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -86,8 +86,6 @@
     @apply bg-background text-foreground font-sans antialiased;
     height: 100%;
     overflow: hidden;
-    /* ss03 — character-level brand signature across all text roles */
-    font-feature-settings: "ss03";
   }
 
   /* faint ink dot grid on the cream canvas — owns the app frame */
@@ -95,6 +93,26 @@
     background-color: var(--background);
     background-image: radial-gradient(circle, rgba(0, 0, 0, 0.1) 1px, transparent 1px);
     background-size: 24px 24px;
+  }
+
+  /* view-switch — subtle enter animation when navigating between panels */
+  @keyframes view-in {
+    from {
+      opacity: 0;
+      transform: translateX(14px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+  .view-switch {
+    animation: view-in 120ms cubic-bezier(0.2, 0, 0, 1);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .view-switch {
+      animation: none;
+    }
   }
   ::selection {
     background: var(--aloe);

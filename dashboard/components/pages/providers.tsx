@@ -94,8 +94,17 @@ const GRID = "grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
 export function ProvidersPage() {
   const [sel, setSel] = useState<string | null>(null);
 
-  if (sel) return <ProviderDetail id={sel} onBack={() => setSel(null)} />;
-  return <Overview onOpen={setSel} />;
+  if (sel)
+    return (
+      <div key={sel} className="view-switch">
+        <ProviderDetail id={sel} onBack={() => setSel(null)} />
+      </div>
+    );
+  return (
+    <div key="overview" className="view-switch">
+      <Overview onOpen={setSel} />
+    </div>
+  );
 }
 
 function Overview({ onOpen }: { onOpen: (id: string) => void }) {

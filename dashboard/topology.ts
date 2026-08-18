@@ -222,7 +222,7 @@ export function createTopology(
     ctx.stroke();
     ctx.restore();
     ctx.fillStyle = "#000000";
-    ctx.font = "600 15px Inter, system-ui, sans-serif";
+    ctx.font = "600 15px Geist, system-ui, sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText("troy", 0, 0);
@@ -233,7 +233,7 @@ export function createTopology(
     rr(ctx, pill.x, pill.y, pill.w, pill.h, 3);
     ctx.fill();
     ctx.fillStyle = "#ffffff";
-    ctx.font = "700 11px Inter, system-ui, sans-serif";
+    ctx.font = "700 11px Geist, system-ui, sans-serif";
     ctx.fillText(String(data.activeCount), pill.x + pill.w / 2, pill.y + pill.h / 2 + 0.5);
     ctx.restore();
     void t;
@@ -265,14 +265,14 @@ export function createTopology(
     ctx.fill();
     ctx.globalAlpha = 1;
     ctx.fillStyle = color;
-    ctx.font = "700 12px Inter, system-ui, sans-serif";
+    ctx.font = "700 12px Geist, system-ui, sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(p.label.slice(0, 2).toUpperCase(), chipX + 16, chipY + 17);
     ctx.restore();
 
     ctx.fillStyle = p.state === "active" ? color : "#000000";
-    ctx.font = "600 13px Inter, system-ui, sans-serif";
+    ctx.font = "600 13px Geist, system-ui, sans-serif";
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
     const label = p.label.length > 16 ? p.label.slice(0, 15) + "…" : p.label;
