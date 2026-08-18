@@ -469,7 +469,84 @@ function ProviderDetail({ id, onBack }: { id: string; onBack: () => void }) {
           />
         </div>
       </Card>
+
+      <ModelsCard providerId={id} />
     </div>
+  );
+}
+
+/** Live model list fetched from the provider's /models endpoint. */
+function ModelsCard({ providerId }: { providerId: string }) {
+  const [models, setModels] = useState<{ id: string; name: string }[] | null>(null);
+  const [url, setUrl] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const fetchModels = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await api(`/api/providers/${providerId}/models`);
+      const data = res as { models?: { id: string; name: string }[]; url?: string; error?: string };
+      if (data.error) {
+        setModels(null);
+        setUrl(data.url ?? null);
+        setErr(data.error);
+      } else {
+        setModels(data.models ?? []);
+        setUrl(data.url ?? null);
+      }
+    } catch (e2) {
+      setErr(e2 instanceof Error ? e2.message : String(e2));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader className="gap-1">
+        <div className="flex items-center justify-between gap-3">
+          <CardTitle className="text-sm">models</CardTitle>
+          <Button variant="outline" size="sm" onClick={fetchModels} disabled={busy}>
+            {busy ? "fetching…" : "fetch models"}
+          </Button>
+        </div>
+        <CardDescription className="font-mono text-[11px]">
+          {url ?? "fetched live from the provider — copy a model to use it"}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {err ? (
+          <p className="text-xs text-red-400">
+            fetch failed: {err}
+            <span className="text-muted-foreground"> — add a key first? most providers require one.</span>
+          </p>
+        ) : models === null ? (
+          <p className="text-xs text-muted-foreground">click “fetch models” to load the available models.</p>
+        ) : models.length === 0 ? (
+          <p className="text-xs text-muted-foreground">no models returned.</p>
+        ) : (
+          <div className="grid gap-1">
+            {models.slice(0, 200).map((m) => (
+              <div
+                key={m.id}
+                className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-1.5"
+              >
+                <div className="min-w-0">
+                  <p className="truncate font-mono text-xs">{m.id}</p>
+                  {m.name !== m.id ? <p className="truncate text-[11px] text-muted-foreground">{m.name}</p> : null}
+                </div>
+                <CopyButton what={`model:${providerId}/${m.id}`} text={`${providerId}/${m.id}`} label="copy provider/model" />
+              </div>
+            ))}
+            {models.length > 200 ? (
+              <p className="text-[11px] text-muted-foreground">…{models.length - 200} more, fetch upstream directly for the full list</p>
+            ) : null}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 /** Popup for adding a key to one provider — optional name, priority, placeholders. */

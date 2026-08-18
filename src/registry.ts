@@ -7,6 +7,8 @@ export interface Provider {
   name?: string;
   /** Chat-completions endpoint. May contain {placeholder} tokens filled from connection `data`. */
   baseUrl: string;
+  /** Models-list endpoint; defaults to baseUrl with /chat/completions → /models. */
+  modelsUrl?: string;
   auth: Auth;
   /** Static extra headers, e.g. HTTP-Referer for OpenRouter-family. */
   headers?: Record<string, string>;
@@ -26,7 +28,7 @@ export const PROVIDERS: Provider[] = [
   { id: "together", aliases: ["together"], baseUrl: "https://api.together.xyz/v1/chat/completions", auth: "bearer" },
   { id: "nvidia", aliases: ["nvidia"], baseUrl: "https://integrate.api.nvidia.com/v1/chat/completions", auth: "bearer" },
   { id: "cerebras", aliases: ["cerebras"], baseUrl: "https://api.cerebras.ai/v1/chat/completions", auth: "bearer" },
-  { id: "fireworks", aliases: ["fireworks"], baseUrl: "https://api.fireworks.ai/inference/v1/chat/completions", auth: "bearer" },
+  { id: "fireworks", aliases: ["fireworks"], baseUrl: "https://api.fireworks.ai/inference/v1/chat/completions", auth: "bearer", modelsUrl: "https://api.fireworks.ai/v1/accounts/fireworks/models?filter=supports_serverless=true" },
   { id: "siliconflow", aliases: ["siliconflow"], baseUrl: "https://api.siliconflow.com/v1/chat/completions", auth: "bearer" },
   { id: "hyperbolic", aliases: ["hyperbolic", "hyp"], baseUrl: "https://api.hyperbolic.xyz/v1/chat/completions", auth: "bearer" },
   { id: "perplexity", aliases: ["perplexity", "pplx"], baseUrl: "https://api.perplexity.ai/chat/completions", auth: "bearer" },

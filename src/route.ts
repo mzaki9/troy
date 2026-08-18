@@ -166,7 +166,7 @@ function safeExtra(conn: Connection): Record<string, string> {
   }
 }
 
-function buildBaseUrl(def: Provider, conn: Connection): string {
+export function buildBaseUrl(def: Provider, conn: Connection): string {
   const base = conn.base_url ?? def.baseUrl;
   if (!def.placeholders) return base;
   const extra = safeExtra(conn);

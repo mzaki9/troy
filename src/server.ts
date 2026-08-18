@@ -1,7 +1,7 @@
 import type { Server } from "bun";
 import { mkdirSync } from "node:fs";
 import { Store } from "./db";
-import { CooldownStore, handleChat, type ChatDeps } from "./route";
+import { buildBaseUrl, CooldownStore, handleChat, type ChatDeps } from "./route";
 import { customProviderIds, getProvider, providerIds, registerCustomProvider, unregisterCustomProvider, type Provider } from "./registry";
 
 const PORT = Number(process.env.PORT ?? 20128);
@@ -204,6 +204,26 @@ const server: Server<undefined> = Bun.serve({
 
     if (request.method === "GET" && path === "/api/providers") {
       return json(providerCatalog());
+    }
+
+    if (request.method === "GET" && path.startsWith("/api/providers/") && path.endsWith("/models")) {
+      const id = decodeURIComponent(path.slice("/api/providers/".length, -"/models".length));
+      const def = getProvider(id);
+      if (!def) return json({ error: "unknown provider" }, 404);
+      const conn = store.listConnections(id).find((c) => c.is_active === 1) ?? null;
+      const headers: Record<string, string> = {};
+      if (conn && def.auth === "bearer") headers.authorization = `Bearer ${conn.api_key}`;
+      else if (conn && def.auth === "raw") headers["x-api-key"] = conn.api_key;
+      for (const [k, v] of Object.entries(def.headers ?? {})) headers[k] = v;
+      const base = conn ? buildBaseUrl(def, conn) : def.baseUrl;
+      const modelsUrl = def.modelsUrl ?? (base.endsWith("/chat/completions") ? base.replace(/\/chat\/completions$/, "/models") : base + "/models");
+      return fetch(modelsUrl, { headers, signal: AbortSignal.timeout(15000), redirect: "follow" })
+        .then(async (res) => {
+          if (!res.ok) return json({ error: `upstream ${res.status}`, url: modelsUrl, models: [] }, 502);
+          const data = (await res.json()) as { data?: { id: string; name?: string }[] };
+          return json({ url: modelsUrl, models: (data.data ?? []).map((m) => ({ id: m.id, name: m.name ?? m.id })) });
+        })
+        .catch((e: unknown) => json({ error: e instanceof Error ? e.message : String(e), url: modelsUrl, models: [] }, 502));
     }
 
     if (path === "/api/settings") {
