@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import { ArrowLeft, Check, Copy, Eye, EyeOff, KeyRound, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, ChevronsUpDown, Copy, Eye, EyeOff, KeyRound, Plus, Trash2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { api, mask, useApi } from "../api";
 import type { Connection, ProviderCat } from "../api";
@@ -9,8 +9,10 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "../ui/command";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Skeleton } from "../ui/skeleton";
 import { Switch } from "../ui/switch";
@@ -481,6 +483,8 @@ function ModelsCard({ providerId }: { providerId: string }) {
   const [url, setUrl] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [selected, setSelected] = useState<{ id: string; name: string } | null>(null);
+  const [open, setOpen] = useState(false);
 
   const fetchModels = async () => {
     setBusy(true);
@@ -527,23 +531,69 @@ function ModelsCard({ providerId }: { providerId: string }) {
         ) : models.length === 0 ? (
           <p className="text-xs text-muted-foreground">no models returned.</p>
         ) : (
-          <div className="grid gap-1">
-            {models.slice(0, 200).map((m) => (
-              <div
-                key={m.id}
-                className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-1.5"
-              >
+          <>
+            <Popover open={open} onOpenChange={setOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  role="combobox"
+                  aria-expanded={open}
+                  className="w-full justify-between font-mono text-xs"
+                >
+                  {selected ? selected.id : "choose a model…"}
+                  <ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-[min(380px,calc(100vw-2rem))] p-0" align="start">
+                <Command>
+                  <CommandInput placeholder="search models…" />
+                  <CommandList>
+                    <CommandEmpty>no model found.</CommandEmpty>
+                    <CommandGroup>
+                      {models.slice(0, 500).map((m) => (
+                        <CommandItem
+                          key={m.id}
+                          value={m.id}
+                          onSelect={() => {
+                            setSelected(m);
+                            setOpen(false);
+                          }}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate font-mono text-xs">{m.id}</p>
+                            {m.name !== m.id ? (
+                              <p className="truncate text-[11px] text-muted-foreground">{m.name}</p>
+                            ) : null}
+                          </div>
+                          <Check
+                            className={cn(
+                              "size-4 shrink-0",
+                              selected?.id === m.id ? "opacity-100" : "opacity-0"
+                            )}
+                          />
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
+            {selected ? (
+              <div className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
                 <div className="min-w-0">
-                  <p className="truncate font-mono text-xs">{m.id}</p>
-                  {m.name !== m.id ? <p className="truncate text-[11px] text-muted-foreground">{m.name}</p> : null}
+                  <p className="truncate font-mono text-xs">{selected.id}</p>
+                  {selected.name !== selected.id ? (
+                    <p className="truncate text-[11px] text-muted-foreground">{selected.name}</p>
+                  ) : null}
                 </div>
-                <CopyButton what={`model:${providerId}/${m.id}`} text={`${providerId}/${m.id}`} label="copy provider/model" />
+                <CopyButton
+                  what={`model:${providerId}/${selected.id}`}
+                  text={`${providerId}/${selected.id}`}
+                  label="copy provider/model"
+                />
               </div>
-            ))}
-            {models.length > 200 ? (
-              <p className="text-[11px] text-muted-foreground">…{models.length - 200} more, fetch upstream directly for the full list</p>
             ) : null}
-          </div>
+          </>
         )}
       </CardContent>
     </Card>
