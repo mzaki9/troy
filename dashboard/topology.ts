@@ -140,20 +140,20 @@ export function createTopology(
 
   function beam(id: string, t: number) {
     const e = edgePoints(id);
-    ctx.strokeStyle = "rgba(34,211,238,0.35)";
+    ctx.strokeStyle = "rgba(193,251,212,0.85)"; /* aloe halo */
     ctx.lineWidth = 10;
     strokeEdge(id);
-    ctx.strokeStyle = "rgba(74,222,128,0.85)";
+    ctx.strokeStyle = "#86efac";
     ctx.lineWidth = 5;
     strokeEdge(id);
-    ctx.strokeStyle = "#f8fafc";
+    ctx.strokeStyle = "#000000";
     ctx.lineWidth = 2.2;
     strokeEdge(id);
     for (let i = 0; i < 4; i++) {
       const frac = (t * 0.6 + (i * 0.25 + 0.125)) % 1;
       const pt = point(e.p0, e.p, frac);
       const r = i % 2 ? 2.5 : 4;
-      ctx.fillStyle = i % 2 ? "#67e8f9" : "#fde047";
+      ctx.fillStyle = i % 2 ? "#000000" : "#34d399";
       ctx.globalAlpha = 0.9;
       ctx.beginPath();
       ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
@@ -162,7 +162,7 @@ export function createTopology(
     for (let i = 0; i < 5; i++) {
       const frac = (t * 0.6 + i / 5) % 1;
       const pt = point(e.p0, e.p, frac);
-      ctx.fillStyle = "#e0f2fe";
+      ctx.fillStyle = "#c1fbd4";
       ctx.globalAlpha = 0.5 + 0.5 * Math.sin(t * 6 + i * 2);
       ctx.beginPath();
       ctx.arc(pt.x, pt.y, 1.8, 0, Math.PI * 2);
@@ -191,9 +191,9 @@ export function createTopology(
         ctx.globalAlpha = 1;
         break;
       default:
-        ctx.strokeStyle = "#3a3a3a";
+        ctx.strokeStyle = "#d4d4d8";
         ctx.lineWidth = 1;
-        ctx.globalAlpha = 0.3;
+        ctx.globalAlpha = 0.9;
         strokeEdge(p.id);
         ctx.globalAlpha = 1;
     }
@@ -204,24 +204,24 @@ export function createTopology(
     const y = -ROUTER_H / 2;
     const active = data.activeCount > 0;
     ctx.save();
-    ctx.shadowColor = "#4493f8";
-    ctx.shadowBlur = active ? 24 : 10;
+    ctx.shadowColor = "#c1fbd4";
+    ctx.shadowBlur = active ? 28 : 0;
     if (active) {
       const g = ctx.createLinearGradient(x, y, x + ROUTER_W, y + ROUTER_H);
-      g.addColorStop(0, "rgba(68,147,248,0.30)");
-      g.addColorStop(0.5, "rgba(253,224,71,0.20)");
-      g.addColorStop(1, "rgba(34,211,238,0.25)");
+      g.addColorStop(0, "rgba(193,251,212,0.95)");
+      g.addColorStop(0.5, "rgba(212,249,224,0.95)");
+      g.addColorStop(1, "rgba(193,251,212,0.95)");
       ctx.fillStyle = g;
     } else {
-      ctx.fillStyle = "rgba(68,147,248,0.08)";
+      ctx.fillStyle = "rgba(0,0,0,0.03)";
     }
     rr(ctx, x, y, ROUTER_W, ROUTER_H, 6);
     ctx.fill();
-    ctx.strokeStyle = active ? "#fde047" : "#4493f8";
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = "#000000";
+    ctx.lineWidth = active ? 2 : 1.5;
     ctx.stroke();
     ctx.restore();
-    ctx.fillStyle = active ? "#fde047" : "#ededed";
+    ctx.fillStyle = "#000000";
     ctx.font = "600 15px Inter, system-ui, sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
@@ -229,10 +229,10 @@ export function createTopology(
     const pill = { x: ROUTER_W / 2 - 4, y: -ROUTER_H / 2 - 2, w: 26, h: 18 };
     ctx.save();
     ctx.shadowBlur = 0;
-    ctx.fillStyle = "#fde047";
+    ctx.fillStyle = "#000000";
     rr(ctx, pill.x, pill.y, pill.w, pill.h, 3);
     ctx.fill();
-    ctx.fillStyle = "#111";
+    ctx.fillStyle = "#ffffff";
     ctx.font = "700 11px Inter, system-ui, sans-serif";
     ctx.fillText(String(data.activeCount), pill.x + pill.w / 2, pill.y + pill.h / 2 + 0.5);
     ctx.restore();
@@ -247,12 +247,12 @@ export function createTopology(
     ctx.save();
     ctx.shadowColor = p.state === "active" ? color : "transparent";
     ctx.shadowBlur = p.state === "active" ? 16 : 0;
-    ctx.fillStyle = "#202020";
+    ctx.fillStyle = "#ffffff";
     rr(ctx, x, y, NODE_W, NODE_H, 5);
     ctx.fill();
     ctx.shadowBlur = 0;
     ctx.lineWidth = p.state === "active" ? 2 : 1;
-    ctx.strokeStyle = p.state === "active" ? "#4493f8" : p.state === "error" ? "#ef4444" : p.state === "last" ? "#f59e0b" : "#3a3a3a";
+    ctx.strokeStyle = p.state === "active" ? "#000000" : p.state === "error" ? "#ef4444" : p.state === "last" ? "#f59e0b" : "#e4e4e7";
     ctx.stroke();
     ctx.restore();
 
@@ -271,7 +271,7 @@ export function createTopology(
     ctx.fillText(p.label.slice(0, 2).toUpperCase(), chipX + 16, chipY + 17);
     ctx.restore();
 
-    ctx.fillStyle = p.state === "active" ? color : "#ededed";
+    ctx.fillStyle = p.state === "active" ? color : "#000000";
     ctx.font = "600 13px Inter, system-ui, sans-serif";
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
@@ -280,13 +280,13 @@ export function createTopology(
 
     if (p.state === "active") {
       const pulse = (performance.now() / 1000) % 1;
-      ctx.strokeStyle = "#fde047";
+      ctx.strokeStyle = "#000000";
       ctx.globalAlpha = 0.75 * (1 - pulse);
       ctx.beginPath();
       ctx.arc(x + NODE_W - 18, n.y, 4 + 6 * pulse, 0, Math.PI * 2);
       ctx.stroke();
       ctx.globalAlpha = 1;
-      ctx.fillStyle = "#fde047";
+      ctx.fillStyle = "#000000";
       ctx.beginPath();
       ctx.arc(x + NODE_W - 18, n.y, 4, 0, Math.PI * 2);
       ctx.fill();

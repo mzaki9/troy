@@ -20,20 +20,20 @@ export function Sidebar({
 }) {
   return (
     <aside className="flex w-64 shrink-0 flex-col border-r border-border bg-card">
-      <div className="flex items-center gap-2.5 px-5 pt-5 pb-4">
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-md border border-primary/40 bg-gradient-to-br from-[#4493f8] to-[#2458ab]">
-          <img src="/favicon.svg" alt="troy" className="size-6" />
+      <div className="flex items-center gap-2.5 px-6 pt-6 pb-5">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary">
+          <img src="/favicon.svg" alt="troy" className="size-5" />
         </span>
         <span className="min-w-0">
-          <span className="block font-mono text-[13px] font-semibold tracking-wide">troy</span>
-          <span className="block text-[10px] tracking-widest text-muted-foreground uppercase">
+          <span className="block text-[15px] leading-tight font-semibold tracking-tight">troy</span>
+          <span className="block text-[10px] tracking-[0.08em] text-muted-foreground uppercase">
             minimal ai router
           </span>
         </span>
       </div>
 
-      <nav className="flex-1 space-y-0.5 px-3 py-2">
-        <p className="px-2.5 pt-2 pb-1.5 font-mono text-[10px] tracking-widest text-muted-foreground uppercase">
+      <nav className="flex-1 space-y-1 px-4 py-2">
+        <p className="px-4 pt-2 pb-2 text-[10px] tracking-[0.08em] text-muted-foreground uppercase">
           router
         </p>
         {PAGES.map((p) => (
@@ -41,9 +41,8 @@ export function Sidebar({
             key={p.id}
             onClick={() => onNavigate(p.id)}
             className={cn(
-              "flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
-              page === p.id &&
-                "bg-primary/10 text-primary ring-1 ring-inset ring-primary/20 hover:bg-primary/10 hover:text-primary"
+              "flex w-full items-center gap-3 rounded-full px-4 py-2 text-[13px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
+              page === p.id && "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground"
             )}
           >
             <p.icon className="size-4" />
@@ -52,12 +51,12 @@ export function Sidebar({
         ))}
       </nav>
 
-      <div className="border-t border-border px-5 py-3">
-        <p className="flex items-center gap-1.5 font-mono text-[10px] tracking-widest text-muted-foreground uppercase">
-          <span className="size-1.5 bg-emerald-500" aria-hidden="true" />
+      <div className="border-t border-border px-6 py-4">
+        <p className="flex items-center gap-1.5 text-[10px] tracking-[0.08em] text-muted-foreground uppercase">
+          <span className="size-1.5 bg-aloe ring-1 ring-black/10" aria-hidden="true" />
           router online
         </p>
-        <p className="mt-1.5 truncate font-mono text-[11px] text-muted-foreground/80">
+        <p className="mt-1.5 truncate font-mono text-[11px] text-muted-foreground">
           {location.origin}/v1
         </p>
       </div>

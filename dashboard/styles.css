@@ -1,33 +1,43 @@
 @import "tailwindcss";
 
-@custom-variant dark (&:is(.dark *));
-
 :root {
-  --radius: 0.375rem;
-  --background: #141414;
-  --foreground: #ededed;
-  --card: #1b1b1b;
-  --card-foreground: #ededed;
-  --popover: #232323;
-  --popover-foreground: #ededed;
-  --primary: #4493f8;
+  --radius: 0.75rem; /* rounded.lg = 12px cards, rounded.md = 10px inputs */
+
+  /* canvases — transactional light track (never blended with canvas-night) */
+  --background: #fbfbf5; /* canvas-cream */
+  --foreground: #000000; /* ink */
+  --card: #ffffff; /* canvas-light */
+  --card-foreground: #000000;
+  --popover: #ffffff;
+  --popover-foreground: #000000;
+
+  /* pill vocabulary — black primary, white on it */
+  --primary: #000000;
   --primary-foreground: #ffffff;
-  --secondary: #262626;
-  --secondary-foreground: #ededed;
-  --muted: #222222;
-  --muted-foreground: #9ca3af;
-  --accent: #292929;
-  --accent-foreground: #ffffff;
-  --destructive: #ef4444;
+  --secondary: #f4f4f4;
+  --secondary-foreground: #000000;
+  --muted: #f4f4f4;
+  --muted-foreground: #71717a; /* shade-50 */
+  --accent: #f4f4f4;
+  --accent-foreground: #000000;
+
+  --destructive: #dc2626;
   --destructive-foreground: #ffffff;
-  --border: #2d2d2d;
-  --input: #333333;
-  --ring: #4493f8;
+
+  --border: #e4e4e7; /* hairline-light */
+  --input: #e4e4e7;
+  --ring: #000000;
+
+  /* brand mint — scoped to light surfaces only */
+  --aloe: #c1fbd4;
+  --pistachio: #d4f9e0;
+  --shade-30: #d4d4d8;
+  --shade-70: #3f3f46;
 }
 
 @theme inline {
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -49,6 +59,13 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
 
+  /* brand extras */
+  --color-aloe: var(--aloe);
+  --color-pistachio: var(--pistachio);
+  --color-ink: #000000;
+  --color-shade-30: var(--shade-30);
+  --color-shade-70: var(--shade-70);
+
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -57,20 +74,23 @@
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border outline-ring/30;
   }
   html {
-    color-scheme: dark;
+    color-scheme: light;
   }
   body {
     @apply bg-background text-foreground font-sans antialiased;
+    /* ss03 — character-level brand signature across all text roles */
+    font-feature-settings: "ss03";
   }
   ::selection {
-    background: rgba(68, 147, 248, 0.25);
+    background: var(--aloe);
+    color: #000000;
   }
   * {
     scrollbar-width: thin;
-    scrollbar-color: rgba(120, 120, 120, 0.35) transparent;
+    scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
   }
   *::-webkit-scrollbar {
     width: 8px;
@@ -80,24 +100,14 @@
     background: transparent;
   }
   *::-webkit-scrollbar-thumb {
-    background: rgba(120, 120, 120, 0.35);
+    background: rgba(0, 0, 0, 0.18);
     border-radius: 9999px;
     border: 2px solid transparent;
     background-clip: padding-box;
   }
   *::-webkit-scrollbar-thumb:hover {
-    background: rgba(156, 163, 175, 0.55);
+    background: rgba(0, 0, 0, 0.3);
     border: 2px solid transparent;
     background-clip: padding-box;
-  }
-}
-
-@layer utilities {
-  .bg-grid {
-    background-image:
-      linear-gradient(to right, var(--primary) 1px, transparent 1px),
-      linear-gradient(to bottom, var(--primary) 1px, transparent 1px);
-    background-size: 40px 40px;
-    opacity: 0.04;
   }
 }

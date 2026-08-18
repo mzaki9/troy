@@ -44,11 +44,11 @@ function StatCard({
   valueClass?: string;
 }) {
   return (
-    <Card className="gap-1 px-4 py-3.5">
-      <p className="font-mono text-[10px] tracking-widest text-muted-foreground uppercase">
+    <Card className="gap-1 px-5 py-4">
+      <p className="text-[11px] tracking-[0.08em] text-muted-foreground uppercase">
         {label}
       </p>
-      <p className={cn("truncate font-mono text-xl font-semibold tracking-tight tabular-nums", valueClass)}>
+      <p className={cn("truncate text-3xl font-light tracking-[0.02em] tabular-nums", valueClass)}>
         {value}
       </p>
       {sub ? <p className="text-[10px] text-muted-foreground">{sub}</p> : null}
@@ -88,9 +88,9 @@ function ProviderBars({ byProvider }: { byProvider: StatsData["byProvider"] }) {
               </span>
               <span className={cn("shrink-0 font-medium", rateClass(pct))}>{pct.toFixed(0)}%</span>
             </div>
-            <div className="h-2 overflow-hidden rounded-[3px]" style={{ background: barHex(pct) + "1c" }}>
+            <div className="h-2 overflow-hidden rounded-full" style={{ background: barHex(pct) + "26" }}>
               <div
-                className="h-full rounded-[3px] transition-all"
+                className="h-full rounded-full transition-all"
                 style={{ width: pct.toFixed(0) + "%", background: barHex(pct) }}
               />
             </div>
@@ -122,24 +122,24 @@ function RequestsTable({ rows, limit }: { rows?: LogRow[]; limit: number }) {
     <Table>
       <TableHeader>
         <TableRow className="hover:bg-transparent">
-          <TableHead className="font-mono text-[10px] tracking-widest uppercase">time</TableHead>
-          <TableHead className="font-mono text-[10px] tracking-widest uppercase">provider</TableHead>
-          <TableHead className="font-mono text-[10px] tracking-widest uppercase">model</TableHead>
-          <TableHead className="font-mono text-[10px] tracking-widest uppercase">status</TableHead>
-          <TableHead className="font-mono text-[10px] tracking-widest uppercase text-right">ms</TableHead>
+          <TableHead className="text-[11px] font-normal tracking-[0.08em] uppercase">time</TableHead>
+          <TableHead className="text-[11px] font-normal tracking-[0.08em] uppercase">provider</TableHead>
+          <TableHead className="text-[11px] font-normal tracking-[0.08em] uppercase">model</TableHead>
+          <TableHead className="text-[11px] font-normal tracking-[0.08em] uppercase">status</TableHead>
+          <TableHead className="text-[11px] font-normal tracking-[0.08em] uppercase text-right">ms</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
         {list.map((r, i) => (
           <TableRow key={i}>
-            <TableCell className="font-mono text-xs text-muted-foreground">
+            <TableCell className="text-muted-foreground tabular-nums">
               {new Date(Date.parse(r.ts)).toLocaleTimeString()}
             </TableCell>
             <TableCell>{r.provider}</TableCell>
             <TableCell>
               <ModelCode model={r.model} />
             </TableCell>
-            <TableCell className={cn("font-mono text-xs", r.status === "200 OK" ? "text-emerald-400" : "text-red-400")}>
+            <TableCell className={cn("font-mono text-xs", r.status === "200 OK" ? "text-emerald-600" : "text-red-600")}>
               {r.status}
             </TableCell>
             <TableCell className="text-right font-mono tabular-nums">{r.latency_ms}</TableCell>
@@ -165,12 +165,12 @@ function ModelTable({ rows }: { rows?: StatRow[] }) {
     <Table>
       <TableHeader>
         <TableRow className="hover:bg-transparent">
-          <TableHead className="font-mono text-[10px] tracking-widest uppercase">model</TableHead>
-          <TableHead className="font-mono text-[10px] tracking-widest uppercase">provider</TableHead>
-          <TableHead className="font-mono text-[10px] tracking-widest uppercase text-right">requests</TableHead>
-          <TableHead className="font-mono text-[10px] tracking-widest uppercase text-right">ok</TableHead>
-          <TableHead className="font-mono text-[10px] tracking-widest uppercase text-right">avg ms</TableHead>
-          <TableHead className="font-mono text-[10px] tracking-widest uppercase">last used</TableHead>
+          <TableHead className="text-[11px] font-normal tracking-[0.08em] uppercase">model</TableHead>
+          <TableHead className="text-[11px] font-normal tracking-[0.08em] uppercase">provider</TableHead>
+          <TableHead className="text-[11px] font-normal tracking-[0.08em] uppercase text-right">requests</TableHead>
+          <TableHead className="text-[11px] font-normal tracking-[0.08em] uppercase text-right">ok</TableHead>
+          <TableHead className="text-[11px] font-normal tracking-[0.08em] uppercase text-right">avg ms</TableHead>
+          <TableHead className="text-[11px] font-normal tracking-[0.08em] uppercase">last used</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -183,7 +183,7 @@ function ModelTable({ rows }: { rows?: StatRow[] }) {
             <TableCell className="text-right font-mono tabular-nums">{fmt.format(r.requests)}</TableCell>
             <TableCell className="text-right font-mono tabular-nums">{fmt.format(r.ok)}</TableCell>
             <TableCell className="text-right font-mono tabular-nums">{short(r.avg_ms)}</TableCell>
-            <TableCell className="font-mono text-xs text-muted-foreground">{lastUsed(r.last ?? "")}</TableCell>
+            <TableCell className="text-muted-foreground">{lastUsed(r.last ?? "")}</TableCell>
           </TableRow>
         ))}
       </TableBody>
@@ -195,15 +195,15 @@ function PeriodPills() {
   const [period, setPeriod] = useState("24h");
   const pills = ["24h", "Today", "7D", "30D", "All"];
   return (
-    <div className="inline-flex w-fit rounded-md border bg-muted/50 p-1">
+    <div className="inline-flex w-fit rounded-full border bg-white p-1">
       {pills.map((p) => (
         <button
           key={p}
           onClick={() => setPeriod(p)}
           className={cn(
-            "rounded-[4px] px-3 py-1 font-mono text-xs transition-colors",
+            "rounded-full px-4 py-1.5 text-xs font-medium transition-colors",
             period === p
-              ? "bg-background text-foreground shadow-sm"
+              ? "bg-primary text-primary-foreground"
               : "text-muted-foreground hover:text-foreground"
           )}
         >
@@ -248,7 +248,7 @@ export function UsagePage() {
               <StatCard
                 label="Failed"
                 value={fmt.format(t.fail)}
-                valueClass={t.fail > 0 ? "text-red-400" : ""}
+                valueClass={t.fail > 0 ? "text-red-600" : ""}
               />
               <StatCard label="Avg latency" value={t.requests ? short(t.avg_ms) : "—"} />
               <StatCard label="p95 latency" value={t.requests ? short(t.p95_ms) : "—"} />

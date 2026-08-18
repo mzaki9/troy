@@ -71,7 +71,7 @@ function CopyButton({ what, text, label }: { what: string; text: string; label: 
       aria-label={label}
       title={label}
     >
-      {copied === what ? <Check className="size-4 text-emerald-400" /> : <Copy className="size-4" />}
+      {copied === what ? <Check className="size-4 text-green-600" /> : <Copy className="size-4" />}
     </Button>
   );
 }
@@ -163,8 +163,8 @@ function Overview({ onOpen }: { onOpen: (id: string) => void }) {
                   onClick={() => onOpen(p.id)}
                   title={p.baseUrl}
                   className={cn(
-                    "flex gap-3 rounded-lg border bg-card px-4 py-3 text-left shadow-sm transition-colors hover:border-primary/40 focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:outline-none",
-                    p.connected && "border-emerald-500/40"
+                    "flex gap-3 rounded-lg border bg-card px-4 py-3 text-left transition-colors hover:border-black/40 focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/20 focus-visible:outline-none",
+                    p.connected && "border-aloe"
                   )}
                 >
                   <ProviderIcon id={p.id} className="size-8 rounded-lg" />
@@ -253,7 +253,7 @@ function Overview({ onOpen }: { onOpen: (id: string) => void }) {
                       description="This connection will be removed and can no longer serve requests."
                       onConfirm={() => remove(c)}
                     >
-                      <Button variant="ghost" size="icon" aria-label={`remove ${c.provider} key`}>
+                      <Button variant="ghost" size="icon" aria-label={`remove ${c.provider} key`} className="hover:text-destructive">
                         <Trash2 className="size-4" />
                       </Button>
                     </DeleteDialog>
@@ -266,7 +266,7 @@ function Overview({ onOpen }: { onOpen: (id: string) => void }) {
 
         <form
           onSubmit={addConnection}
-          className="flex flex-wrap items-end gap-3 border-t px-6 pt-6"
+          className="flex flex-wrap items-end gap-3 border-t px-8 pt-6"
         >
           <div className="flex min-w-28 flex-1 flex-col gap-1.5">
             <Label htmlFor="connProv">provider</Label>
@@ -448,7 +448,7 @@ function ProviderDetail({ id, onBack }: { id: string; onBack: () => void }) {
                         description="This connection will be removed and can no longer serve requests."
                         onConfirm={() => remove(c)}
                       >
-                        <Button variant="ghost" size="icon" aria-label={`remove ${id} key`}>
+                        <Button variant="ghost" size="icon" aria-label={`remove ${id} key`} className="hover:text-destructive">
                           <Trash2 className="size-4" />
                         </Button>
                       </DeleteDialog>
@@ -460,7 +460,7 @@ function ProviderDetail({ id, onBack }: { id: string; onBack: () => void }) {
           )}
         </CardContent>
 
-        <div className="flex justify-end border-t px-6 pt-6">
+        <div className="flex justify-end border-t px-8 pt-6">
           <AddKeyDialog
             providerId={id}
             placeholderKeys={placeholderKeys}
@@ -522,7 +522,7 @@ function ModelsCard({ providerId }: { providerId: string }) {
       </CardHeader>
       <CardContent>
         {err ? (
-          <p className="text-xs text-red-400">
+          <p className="text-xs text-red-600">
             fetch failed: {err}
             <span className="text-muted-foreground"> — add a key first? most providers require one.</span>
           </p>
@@ -693,7 +693,7 @@ function AddKeyDialog({
             <Label htmlFor="akPrio">priority</Label>
             <Input id="akPrio" type="number" value={prio} onChange={(e) => setPrio(e.target.value)} />
           </div>
-          {err ? <p className="text-xs text-red-400">{err}</p> : null}
+          {err ? <p className="text-xs text-red-600">{err}</p> : null}
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <Button type="submit" disabled={!key.trim() || busy}>
@@ -804,7 +804,7 @@ function AddCustomDialog({ onAdded }: { onAdded: () => void }) {
               </SelectContent>
             </Select>
           </div>
-          {err ? <p className="text-xs text-red-400">{err}</p> : null}
+          {err ? <p className="text-xs text-red-600">{err}</p> : null}
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <Button type="submit" disabled={!idv.trim() || !url.trim() || busy}>

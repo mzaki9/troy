@@ -104,7 +104,7 @@ export function CombosPage() {
                   </div>
                 </div>
                 <DeleteComboDialog name={c.name} onConfirm={() => remove(c)}>
-                  <Button variant="ghost" size="icon" aria-label={`delete ${c.name}`}>
+                  <Button variant="ghost" size="icon" aria-label={`delete ${c.name}`} className="hover:text-destructive">
                     <Trash2 className="size-4" />
                   </Button>
                 </DeleteComboDialog>
@@ -115,7 +115,7 @@ export function CombosPage() {
       </CardContent>
       <CardFooter className="flex-col items-stretch gap-3 border-t">
         {!adding ? (
-          <Button variant="outline" className="border-dashed text-primary" onClick={() => setAdding(true)}>
+          <Button variant="aloe" onClick={() => setAdding(true)}>
             <Plus className="size-4" />
             new combo
           </Button>
