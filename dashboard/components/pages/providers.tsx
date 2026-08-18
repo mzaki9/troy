@@ -407,7 +407,6 @@ function ModelsCard({ providerId }: { providerId: string }) {
               className="w-[min(380px,calc(100vw-2rem))] p-0"
               align="start"
               side="bottom"
-              avoidCollisions={false}
             >
               <Command>
                 <CommandInput placeholder="search models…" />
