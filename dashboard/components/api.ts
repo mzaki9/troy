@@ -10,6 +10,7 @@ export interface Connection {
   id: string;
   provider: string;
   api_key: string;
+  name: string | null;
   base_url: string | null;
   priority: number;
   is_active: number;
@@ -46,7 +47,19 @@ export interface LogRow {
 }
 export interface ProviderCat {
   id: string;
+  name?: string;
+  custom: boolean;
   connected: number;
+  baseUrl: string;
+  auth: string;
+  aliases: string[];
+  placeholders: string[];
+}
+export interface CustomProvider {
+  id: string;
+  name?: string;
+  baseUrl: string;
+  auth: string;
 }
 
 /** Poll an API endpoint; refetch() forces an immediate reload. */

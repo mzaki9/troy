@@ -2,7 +2,7 @@ import type { Server } from "bun";
 import { mkdirSync } from "node:fs";
 import { Store } from "./db";
 import { CooldownStore, handleChat, type ChatDeps } from "./route";
-import { getProvider, providerIds } from "./registry";
+import { customProviderIds, getProvider, providerIds, registerCustomProvider, unregisterCustomProvider, type Provider } from "./registry";
 
 const PORT = Number(process.env.PORT ?? 20128);
 const DATA_DIR = process.env.TROY_DATA ?? "data";
@@ -12,6 +12,11 @@ mkdirSync(DATA_DIR, { recursive: true });
 const store = new Store(DATA_DIR + "/troy.db");
 store.startLogFlush(2000);
 const cooldowns = new CooldownStore();
+
+// load user-defined providers into the registry
+for (const p of store.listCustomProviders()) {
+  registerCustomProvider(p as unknown as Provider);
+}
 
 function loadSettings() {
   return store.getSettings();
@@ -129,7 +134,11 @@ function providerCatalog(): unknown[] {
   for (const c of store.listConnections()) {
     counts.set(c.provider, (counts.get(c.provider) ?? 0) + (c.is_active === 1 ? 1 : 0));
   }
-  return providerIds().map((id) => ({ id, connected: counts.get(id) ?? 0 }));
+  const customs = new Set(customProviderIds());
+  return providerIds().map((id) => {
+    const p = getProvider(id)!;
+    return { id, name: p.name, custom: customs.has(id), connected: counts.get(id) ?? 0, baseUrl: p.baseUrl, auth: p.auth, aliases: p.aliases, placeholders: p.placeholders ?? [] };
+  });
 }
 
 
@@ -154,6 +163,8 @@ const MIME: Record<string, string> = {
   ".js": "text/javascript",
   ".css": "text/css",
   ".json": "application/json",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
 };
 
 function staticFile(pathname: string): Response | null {
@@ -232,13 +243,43 @@ const server: Server<undefined> = Bun.serve({
       return json({ ok: true });
     }
 
+    if (path === "/api/custom-providers") {
+      if (request.method === "GET") return json(store.listCustomProviders());
+      if (request.method === "POST") {
+        return readBody(request).then((b) => {
+          const body = b as { id?: string; name?: string; baseUrl?: string; auth?: string } | null;
+          const id = body?.id?.trim().toLowerCase() ?? "";
+          if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(id)) {
+            return json({ error: "id must be 1-32 chars: lowercase letters, digits, dashes" }, 400);
+          }
+          if (getProvider(id)) return json({ error: `provider '${id}' already exists` }, 400);
+          const baseUrl = body?.baseUrl?.trim() ?? "";
+          if (!/^https?:\/\//.test(baseUrl)) return json({ error: "baseUrl must start with http(s)://" }, 400);
+          const auth = body?.auth === "none" || body?.auth === "raw" ? body.auth : "bearer";
+          const p: Provider = { id, aliases: [id], name: body?.name?.trim() || undefined, baseUrl, auth };
+          store.putCustomProvider(id, p);
+          registerCustomProvider(p);
+          return json(p);
+        });
+      }
+    }
+    if (path.startsWith("/api/custom-providers/") && request.method === "DELETE") {
+      const id = decodeURIComponent(path.slice("/api/custom-providers/".length));
+      if (!customProviderIds().includes(id)) return json({ error: "unknown custom provider" }, 404);
+      store.deleteCustomProvider(id);
+      unregisterCustomProvider(id);
+      for (const c of store.listConnections(id)) store.deleteConnection(c.id);
+      return json({ ok: true });
+    }
+
     if (path === "/api/connections") {
       if (request.method === "GET") return json(store.listConnections());
       if (request.method === "POST") {
         return readBody(request).then((b) => {
-          const body = b as { provider?: string; api_key?: string; base_url?: string; extra?: string; priority?: number } | null;
+          const body = b as { provider?: string; api_key?: string; name?: string; base_url?: string; extra?: string; priority?: number } | null;
           if (!body?.provider || !body.api_key) return json({ error: "need provider + api_key" }, 400);
-          const id = store.addConnection({ provider: body.provider, api_key: body.api_key, base_url: body.base_url, extra: body.extra, priority: body.priority });
+          if (!getProvider(body.provider)) return json({ error: `unknown provider: ${body.provider}` }, 400);
+          const id = store.addConnection({ provider: body.provider, api_key: body.api_key, name: body.name, base_url: body.base_url, extra: body.extra, priority: body.priority });
           return json(store.getConnection(id));
         });
       }

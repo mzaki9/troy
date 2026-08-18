@@ -192,3 +192,23 @@ describe("rtk + inject", () => {
     expect((sys as { content: string }).content).toContain("caveman");
   });
 });
+describe("opencode free gate", () => {
+  test("premium model without a key → 402", async () => {
+    const ctx = makeDeps();
+    const res = await handleChat({ model: "opencode/claude-sonnet-4.5" }, ctx.deps);
+    expect(res.status).toBe(402);
+  });
+
+  test("free-tier model passes the gate", async () => {
+    const ctx = makeDeps();
+    addConn(ctx, "opencode", "echo");
+    const res = await handleChat({ model: "opencode/mimo-v2.5-free" }, ctx.deps);
+    expect(res.status).toBe(200);
+  });
+
+  test("unknown model fails safe → 402", async () => {
+    const ctx = makeDeps();
+    const res = await handleChat({ model: "opencode/some-unknown-model" }, ctx.deps);
+    expect(res.status).toBe(402);
+  });
+});

@@ -6,7 +6,7 @@ import { Skeleton } from "../ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { TopologyView } from "../topology-view";
-import { providerColor } from "../../topology";
+import { ProviderIcon } from "../provider-icon";
 import type { TopoData } from "../../topology";
 import {
   barHex,
@@ -79,17 +79,11 @@ function ProviderBars({ byProvider }: { byProvider: StatsData["byProvider"] }) {
     <div className="space-y-3.5">
       {byProvider.slice(0, 8).map((p) => {
         const pct = p.n ? (p.ok / p.n) * 100 : 0;
-        const color = providerColor(p.provider);
         return (
           <div key={p.provider} className="space-y-1">
             <div className="flex items-center justify-between text-sm">
               <span className="flex min-w-0 items-center gap-2 font-medium">
-                <span
-                  className="flex size-5.5 shrink-0 items-center justify-center rounded-md text-[10px] font-bold"
-                  style={{ background: color + "26", color }}
-                >
-                  {p.provider.slice(0, 2).toUpperCase()}
-                </span>
+                <ProviderIcon id={p.provider} className="size-5.5 rounded-md" />
                 <span className="truncate">{p.provider}</span>
               </span>
               <span className={cn("shrink-0 font-medium", rateClass(pct))}>{pct.toFixed(0)}%</span>

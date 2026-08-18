@@ -1,9 +1,11 @@
 import { Database } from "bun:sqlite";
+import type { Provider } from "./registry";
 
 export interface Connection {
   id: string;
   provider: string;
   api_key: string;
+  name: string | null;
   base_url: string | null;
   extra: string;
   priority: number;
@@ -75,6 +77,20 @@ export class Store {
       CREATE INDEX IF NOT EXISTS idx_conn_provider ON connections(provider, is_active, priority);
       CREATE INDEX IF NOT EXISTS idx_uh_ts ON usage_history(ts DESC);
     `);
+    // migrate old provider ids → canonical names
+    this.db.run("UPDATE connections SET provider = 'alibaba' WHERE provider = 'alims-intl';");
+    this.db.run("UPDATE usage_history SET provider = 'alibaba' WHERE provider = 'alims-intl';");
+    this.db.run("UPDATE connections SET provider = 'zai' WHERE provider = 'glm';");
+    this.db.run("UPDATE usage_history SET provider = 'zai' WHERE provider = 'glm';");
+    this.db.run("UPDATE connections SET provider = 'zai-cn' WHERE provider = 'glm-cn';");
+    this.db.run("UPDATE usage_history SET provider = 'zai-cn' WHERE provider = 'glm-cn';");
+    this.db.run("UPDATE connections SET provider = 'alibaba-token-plan' WHERE provider = 'alitp-intl';");
+    this.db.run("UPDATE usage_history SET provider = 'alibaba-token-plan' WHERE provider = 'alitp-intl';");
+    // add connection name column on pre-existing databases
+    const cols = this.db.query("PRAGMA table_info(connections)").all() as { name: string }[];
+    if (!cols.some((c) => c.name === "name")) {
+      this.db.run("ALTER TABLE connections ADD COLUMN name TEXT");
+    }
   }
 
   get raw() {
@@ -92,15 +108,15 @@ export class Store {
     return this.db.query("SELECT * FROM connections ORDER BY provider ASC, priority ASC").all() as unknown as Connection[];
   }
 
-  addConnection(c: { provider: string; api_key: string; base_url?: string | null; extra?: string; priority?: number }): string {
+  addConnection(c: { provider: string; api_key: string; name?: string | null; base_url?: string | null; extra?: string; priority?: number }): string {
     const id = crypto.randomUUID();
     const extra = c.extra ?? "{}";
     const priority = c.priority ?? 0;
     this.db
       .query(
-        "INSERT INTO connections (id, provider, api_key, base_url, extra, priority, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?)"
+        "INSERT INTO connections (id, provider, api_key, name, base_url, extra, priority, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)"
       )
-      .run(id, c.provider, c.api_key, c.base_url ?? null, extra, priority, new Date().toISOString());
+      .run(id, c.provider, c.api_key, c.name ?? null, c.base_url ?? null, extra, priority, new Date().toISOString());
     return id;
   }
 
@@ -109,8 +125,8 @@ export class Store {
     if (!cur) return;
     const next = { ...cur, ...fields };
     this.db
-      .query("UPDATE connections SET api_key=?, base_url=?, extra=?, priority=?, is_active=? WHERE id=?")
-      .run(next.api_key, next.base_url, next.extra, next.priority, next.is_active, id);
+      .query("UPDATE connections SET api_key=?, name=?, base_url=?, extra=?, priority=?, is_active=? WHERE id=?")
+      .run(next.api_key, next.name, next.base_url, next.extra, next.priority, next.is_active, id);
   }
 
   getConnection(id: string): Connection | undefined {
@@ -160,6 +176,23 @@ export class Store {
     this.db
       .query("INSERT INTO kv (scope, key, value) VALUES ('settings', 'main', ?) ON CONFLICT (scope, key) DO UPDATE SET value = excluded.value")
       .run(JSON.stringify(next));
+  }
+
+  // ---- custom providers ----
+
+  listCustomProviders(): Record<string, unknown>[] {
+    const rows = this.db.query("SELECT key, value FROM kv WHERE scope = 'provider' ORDER BY key ASC").all() as { key: string; value: string }[];
+    return rows.map((r) => ({ id: r.key, ...JSON.parse(r.value) }));
+  }
+
+  putCustomProvider(id: string, p: Provider) {
+    this.db
+      .query("INSERT INTO kv (scope, key, value) VALUES ('provider', ?, ?) ON CONFLICT (scope, key) DO UPDATE SET value = excluded.value")
+      .run(id, JSON.stringify({ ...p, id }));
+  }
+
+  deleteCustomProvider(id: string) {
+    this.db.query("DELETE FROM kv WHERE scope = 'provider' AND key = ?").run(id);
   }
 
   // ---- usage log (batched, off hot path) ----
