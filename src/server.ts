@@ -159,6 +159,7 @@ const MIME: Record<string, string> = {
 function staticFile(pathname: string): Response | null {
   let rel = pathname === "/" ? "index.html" : pathname.replace(/^\//, "");
   if (rel === "app.js") rel = "dist/app.js";
+  if (rel === "styles.css") rel = "dist/styles.css";
   const file = Bun.file(`${import.meta.dir}/../dashboard/${rel}`);
   if (!file.exists()) return null;
   const ext = "." + rel.split(".").pop();

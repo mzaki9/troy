@@ -191,7 +191,7 @@ export function createTopology(
         ctx.globalAlpha = 1;
         break;
       default:
-        ctx.strokeStyle = "#333333";
+        ctx.strokeStyle = "#3a3a3a";
         ctx.lineWidth = 1;
         ctx.globalAlpha = 0.3;
         strokeEdge(p.id);
@@ -215,7 +215,7 @@ export function createTopology(
     } else {
       ctx.fillStyle = "rgba(68,147,248,0.08)";
     }
-    rr(ctx, x, y, ROUTER_W, ROUTER_H, 12);
+    rr(ctx, x, y, ROUTER_W, ROUTER_H, 6);
     ctx.fill();
     ctx.strokeStyle = active ? "#fde047" : "#4493f8";
     ctx.lineWidth = 2;
@@ -230,7 +230,7 @@ export function createTopology(
     ctx.save();
     ctx.shadowBlur = 0;
     ctx.fillStyle = "#fde047";
-    rr(ctx, pill.x, pill.y, pill.w, pill.h, 9);
+    rr(ctx, pill.x, pill.y, pill.w, pill.h, 3);
     ctx.fill();
     ctx.fillStyle = "#111";
     ctx.font = "700 11px Inter, system-ui, sans-serif";
@@ -247,12 +247,12 @@ export function createTopology(
     ctx.save();
     ctx.shadowColor = p.state === "active" ? color : "transparent";
     ctx.shadowBlur = p.state === "active" ? 16 : 0;
-    ctx.fillStyle = "#262626";
-    rr(ctx, x, y, NODE_W, NODE_H, 8);
+    ctx.fillStyle = "#202020";
+    rr(ctx, x, y, NODE_W, NODE_H, 5);
     ctx.fill();
     ctx.shadowBlur = 0;
     ctx.lineWidth = p.state === "active" ? 2 : 1;
-    ctx.strokeStyle = p.state === "active" ? "#4493f8" : p.state === "error" ? "#ef4444" : p.state === "last" ? "#f59e0b" : "#333333";
+    ctx.strokeStyle = p.state === "active" ? "#4493f8" : p.state === "error" ? "#ef4444" : p.state === "last" ? "#f59e0b" : "#3a3a3a";
     ctx.stroke();
     ctx.restore();
 
@@ -261,7 +261,7 @@ export function createTopology(
     ctx.save();
     ctx.globalAlpha = 0.12;
     ctx.fillStyle = color;
-    rr(ctx, chipX, chipY, 32, 32, 8);
+    rr(ctx, chipX, chipY, 32, 32, 5);
     ctx.fill();
     ctx.globalAlpha = 1;
     ctx.fillStyle = color;
