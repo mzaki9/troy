@@ -21,10 +21,13 @@ const TOOLS: Tool[] = [
     desc: "env vars — no config file needed",
     icon: Bot,
     lang: "bash",
-    code: (b, m) => `export ANTHROPIC_BASE_URL=${b}
+    code: (b, m, all) => {
+      const small = all[1] ? `export ANTHROPIC_SMALL_FAST_MODEL=${all[1]}\n` : "";
+      return `export ANTHROPIC_BASE_URL=${b}
 export ANTHROPIC_AUTH_TOKEN=sk-troy
 export ANTHROPIC_MODEL=${m}
-claude`,
+${small}claude`;
+    },
   },
   {
     name: "OpenCode",
@@ -93,24 +96,34 @@ gemini`,
     desc: "point at the OpenAI-compatible endpoint",
     icon: Hammer,
     lang: "bash",
-    code: (b, m) => `aider --openai-api-base ${b}/v1 --openai-api-key sk-troy --model ${m}`,
+    code: (b, m, all) => {
+      const aliases = all.map((s) => ` --alias ${s.slice(s.indexOf("/") + 1)}:${s}`).join("");
+      return `aider --openai-api-base ${b}/v1 --openai-api-key sk-troy --model ${m}${aliases}`;
+    },
   },
   {
     name: "Continue",
     desc: "~/.continue/config.json",
     icon: TextCursorInput,
     lang: "json",
-    code: (b, m) => `{
-  "models": [
-    {
-      "title": "Troy",
+    code: (b, m, all) => {
+      const list = (all.length ? all : [m])
+        .map(
+          (s) => `    {
+      "title": "${s}",
       "provider": "openai",
-      "model": "${m}",
+      "model": "${s}",
       "apiBase": "${b}/v1",
       "apiKey": "sk-troy"
-    }
+    }`
+        )
+        .join(",\n");
+      return `{
+  "models": [
+${list}
   ]
-}`,
+}`;
+    },
   },
   {
     name: "Roo Code",
@@ -161,7 +174,7 @@ export function ToolsPage() {
           ) : null}
           <p className="text-[11px] text-muted-foreground">
             {chosen.length > 0
-              ? `open code json lists all chosen models; single-model tools use ${model}.`
+              ? `open code + continue list every chosen model; aider gets an alias per model; claude code gets main + fast model; cursor, codex, gemini, roo take one model — ${model}.`
               : lastUsed
                 ? `no chosen models yet — snippets use your last-used model ${model}. Pick models in the providers page and they appear here automatically.`
                 : `no chosen models or usage yet — snippets use ${model} until you pick models in the providers page.`}
