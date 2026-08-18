@@ -76,6 +76,19 @@ function CopyButton({ what, text, label }: { what: string; text: string; label: 
   );
 }
 
+/** Strip the status prefix off api() errors and surface the server's clean `error`/`detail`. */
+function parseApiError(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e);
+  const m = /^\d+ (.*)$/.exec(msg);
+  if (!m) return msg;
+  try {
+    const j = JSON.parse(m[1]) as { error?: string; detail?: string };
+    return j.error ? (j.detail ? `${j.error} — ${j.detail}` : j.error) : m[1];
+  } catch {
+    return m[1];
+  }
+}
+
 const GRID = "grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
 
 export function ProvidersPage() {
@@ -346,17 +359,11 @@ function ModelsCard({ providerId }: { providerId: string }) {
     setErr(null);
     try {
       const res = await api(`/api/providers/${providerId}/models`);
-      const data = res as { models?: { id: string; name: string; thinking?: boolean }[]; url?: string; error?: string };
-      if (data.error) {
-        setModels(null);
-        setUrl(data.url ?? null);
-        setErr(data.error);
-      } else {
-        setModels(data.models ?? []);
-        setUrl(data.url ?? null);
-      }
+      const data = res as { models?: { id: string; name: string; thinking?: boolean }[]; url?: string };
+      setModels(data.models ?? []);
+      setUrl(data.url ?? null);
     } catch (e2) {
-      setErr(e2 instanceof Error ? e2.message : String(e2));
+      setErr(parseApiError(e2));
     }
   };
 
@@ -379,8 +386,10 @@ function ModelsCard({ providerId }: { providerId: string }) {
       <CardContent className="space-y-3">
         {err ? (
           <p className="text-xs text-red-600">
-            fetch failed: {err}
-            <span className="text-muted-foreground"> — add a key first? most providers require one.</span>
+            catalog unavailable: {err}
+            {err.startsWith("no key") ? (
+              <span className="text-muted-foreground"> — add a key for {providerId} first.</span>
+            ) : null}
           </p>
         ) : models === null ? (
           <p className="text-xs text-muted-foreground">fetching catalog…</p>

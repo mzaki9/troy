@@ -221,9 +221,25 @@ const server: Server<undefined> = Bun.serve({
       for (const [k, v] of Object.entries(def.headers ?? {})) headers[k] = v;
       const base = conn ? buildBaseUrl(def, conn) : def.baseUrl;
       const modelsUrl = def.modelsUrl ?? (base.endsWith("/chat/completions") ? base.replace(/\/chat\/completions$/, "/models") : base + "/models");
+      // provider needs a key but has none — don't hit upstream with a doomed request
+      if (!conn && def.auth !== "none") {
+        return json({ error: "no key", url: modelsUrl, models: [] }, 502);
+      }
       return fetch(modelsUrl, { headers, signal: AbortSignal.timeout(15000), redirect: "follow" })
         .then(async (res) => {
-          if (!res.ok) return json({ error: `upstream ${res.status}`, url: modelsUrl, models: [] }, 502);
+          if (!res.ok) {
+            // surface the upstream's own semantics, not a synthetic wrapper
+            const text = await res.text().catch(() => "");
+            let detail: string | undefined;
+            try {
+              const j = JSON.parse(text) as { error?: { message?: string } };
+              const msg = j?.error?.message;
+              if (typeof msg === "string" && msg.trim()) detail = msg.trim().slice(0, 200);
+            } catch {
+              /* non-JSON upstream body */
+            }
+            return json({ error: `upstream ${res.status}`, detail, url: modelsUrl, models: [] }, 502);
+          }
           const data = (await res.json()) as { data?: { id: string; name?: string }[] };
           return json({
             url: modelsUrl,
