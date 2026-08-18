@@ -9,7 +9,11 @@ let lastReq: { url: string; headers: Record<string, string> } | null = null;
 const stub = Bun.serve({
   port: 0,
   async fetch(req) {
-    lastReq = { url: req.url, headers: Object.fromEntries(req.headers) };
+    const headers: Record<string, string> = {};
+    req.headers.forEach((v, k) => {
+      headers[k] = v;
+    });
+    lastReq = { url: req.url, headers };
     await req.text();
     return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
   },

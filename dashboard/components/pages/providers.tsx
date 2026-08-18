@@ -71,7 +71,7 @@ function CopyButton({ what, text, label }: { what: string; text: string; label: 
       aria-label={label}
       title={label}
     >
-      {copied === what ? <Check className="size-4 text-green-600" /> : <Copy className="size-4" />}
+      {copied === what ? <Check className="size-4 text-green-600 dark:text-green-400" /> : <Copy className="size-4" />}
     </Button>
   );
 }
@@ -143,7 +143,7 @@ function Overview({ onOpen }: { onOpen: (id: string) => void }) {
                   onClick={() => onOpen(p.id)}
                   title={p.baseUrl}
                   className={cn(
-                    "flex gap-3 rounded-lg border bg-card px-4 py-3 text-left transition-colors hover:border-black/40 focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/20 focus-visible:outline-none",
+                    "flex gap-3 rounded-lg border bg-card px-4 py-3 text-left transition-colors hover:border-black/40 dark:hover:border-white/40 focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/20 focus-visible:outline-none",
                     p.connected && "border-aloe"
                   )}
                 >
@@ -394,7 +394,7 @@ function ModelsCard({ providerId }: { providerId: string }) {
       </CardHeader>
       <CardContent className="space-y-3">
         {err ? (
-          <p className="text-xs text-red-600">
+          <p className="text-xs text-red-600 dark:text-red-400">
             catalog unavailable: {err}
             {err.startsWith("no key") ? (
               <span className="text-muted-foreground"> — add a key for {providerId} first.</span>
@@ -586,7 +586,7 @@ function AddKeyDialog({
             <Label htmlFor="akPrio">priority</Label>
             <Input id="akPrio" type="number" value={prio} onChange={(e) => setPrio(e.target.value)} />
           </div>
-          {err ? <p className="text-xs text-red-600">{err}</p> : null}
+          {err ? <p className="text-xs text-red-600 dark:text-red-400">{err}</p> : null}
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <Button type="submit" disabled={!key.trim() || busy}>
@@ -697,7 +697,7 @@ function AddCustomDialog({ onAdded }: { onAdded: () => void }) {
               </SelectContent>
             </Select>
           </div>
-          {err ? <p className="text-xs text-red-600">{err}</p> : null}
+          {err ? <p className="text-xs text-red-600 dark:text-red-400">{err}</p> : null}
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <Button type="submit" disabled={!idv.trim() || !url.trim() || busy}>

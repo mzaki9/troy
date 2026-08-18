@@ -1,14 +1,20 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Sidebar } from "./sidebar";
 import type { PageId } from "./sidebar";
 import { Topbar } from "./topbar";
 import { UsagePage } from "./pages/usage";
 import { ProvidersPage } from "./pages/providers";
 import { CombosPage } from "./pages/combos";
+import { ToolsPage } from "./pages/tools";
 import { SettingsPage } from "./pages/settings";
+import { initDark } from "../dark";
 
 export default function App() {
   const [page, setPage] = useState<PageId>("usage");
+
+  useEffect(() => {
+    initDark();
+  }, []);
 
   return (
     <div className="dot-grid flex h-screen overflow-hidden text-foreground">
@@ -20,6 +26,7 @@ export default function App() {
             {page === "usage" && <UsagePage />}
             {page === "providers" && <ProvidersPage />}
             {page === "combos" && <CombosPage />}
+            {page === "tools" && <ToolsPage />}
             {page === "settings" && <SettingsPage />}
           </div>
         </div>

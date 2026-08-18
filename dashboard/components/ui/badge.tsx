@@ -9,9 +9,9 @@ const badgeVariants = cva(
     variants: {
       variant: {
         default: "border-transparent bg-aloe text-ink", /* pill-tag-mint */
-        secondary: "border-transparent bg-shade-30 text-ink", /* pill-tag-shade */
+        secondary: "border-transparent bg-shade-30 text-foreground", /* pill-tag-shade */
         destructive: "border-transparent bg-destructive text-white",
-        outline: "border-border bg-white text-ink",
+        outline: "border-border bg-white text-foreground dark:bg-card",
       },
     },
     defaultVariants: {

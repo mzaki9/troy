@@ -21,6 +21,9 @@ export function providerIconSrc(id: string): string {
   return FILE[id] ?? `providers/${id}.svg`;
 }
 
+/** glyph is ink-on-transparent — inverts on the light tile of night track */
+const INVERT: Record<string, true> = { "command-code": true };
+
 /**
  * Provider logo, or a colored monogram tile when the logo is missing/unavailable.
  * Pass sizing/rounding via className (e.g. "size-8 rounded-lg").
@@ -44,7 +47,7 @@ export function ProviderIcon({ id, className }: { id: string; className?: string
       src={providerIconSrc(id)}
       alt={id}
       loading="lazy"
-      className={cn("shrink-0 object-contain", className)}
+      className={cn("shrink-0 object-contain", INVERT[id] && "dark:invert", className)}
       style={{ background: providerColor(id) + "1a" }}
       onError={() => setBroken(true)}
     />

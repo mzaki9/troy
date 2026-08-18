@@ -33,6 +33,39 @@
   --pistachio: #d4f9e0;
   --shade-30: #d4d4d8;
   --shade-70: #3f3f46;
+  --ink: #000000;
+}
+
+/* night track — inverted ink vocabulary, mint accent unchanged */
+.dark {
+  --background: #0b0b0e;
+  --foreground: #f4f4f5;
+  --card: #151518;
+  --card-foreground: #f4f4f5;
+  --popover: #17171b;
+  --popover-foreground: #f4f4f5;
+
+  --primary: #f4f4f5;
+  --primary-foreground: #0b0b0e;
+  --secondary: #27272a;
+  --secondary-foreground: #f4f4f5;
+  --muted: #232326;
+  --muted-foreground: #a1a1aa;
+  --accent: #26262a;
+  --accent-foreground: #f4f4f5;
+
+  --destructive: #f87171;
+  --destructive-foreground: #ffffff;
+
+  --border: #2b2b30;
+  --input: #33333a;
+  --ring: #f4f4f5;
+
+  --aloe: #c1fbd4;
+  --pistachio: #b9f2cd;
+  --shade-30: #3f3f46;
+  --shade-70: #d4d4d8;
+  --ink: #000000; /* ink stays black — mint (aloe) surfaces are light in both tracks */
 }
 
 @theme inline {
@@ -62,7 +95,7 @@
   /* brand extras */
   --color-aloe: var(--aloe);
   --color-pistachio: var(--pistachio);
-  --color-ink: #000000;
+  --color-ink: var(--ink);
   --color-shade-30: var(--shade-30);
   --color-shade-70: var(--shade-70);
 
@@ -80,7 +113,12 @@
     height: 100%;
     /* the app frame owns all scrolling — never let page content flow the document */
     overflow: hidden;
+  }
+  html:not(.dark) {
     color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
   }
   body {
     @apply bg-background text-foreground font-sans antialiased;
@@ -93,6 +131,9 @@
     background-color: var(--background);
     background-image: radial-gradient(circle, rgba(0, 0, 0, 0.1) 1px, transparent 1px);
     background-size: 24px 24px;
+  }
+  .dark .dot-grid {
+    background-image: radial-gradient(circle, rgba(255, 255, 255, 0.09) 1px, transparent 1px);
   }
 
   /* view-switch — subtle enter animation when navigating between panels */
@@ -122,6 +163,9 @@
     scrollbar-width: thin;
     scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
   }
+  .dark * {
+    scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+  }
   *::-webkit-scrollbar {
     width: 8px;
     height: 8px;
@@ -135,9 +179,15 @@
     border: 2px solid transparent;
     background-clip: padding-box;
   }
+  .dark *::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.22);
+  }
   *::-webkit-scrollbar-thumb:hover {
     background: rgba(0, 0, 0, 0.3);
     border: 2px solid transparent;
     background-clip: padding-box;
+  }
+  .dark *::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.35);
   }
 }

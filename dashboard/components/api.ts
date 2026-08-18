@@ -115,6 +115,6 @@ export const lastUsed = (iso: string) =>
   iso ? new Date(Date.parse(iso)).toLocaleString() : "—";
 
 export const rateClass = (r: number) =>
-  r >= 95 ? "text-emerald-600" : r >= 70 ? "text-amber-600" : "text-red-600";
+  r >= 95 ? "text-emerald-600 dark:text-emerald-400" : r >= 70 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
 
 export const barHex = (r: number) => (r > 70 ? "#22c55e" : r >= 30 ? "#eab308" : "#ef4444");

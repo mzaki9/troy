@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Gauge, Layers, Network, Settings2 } from "lucide-react";
+import { Gauge, Layers, Network, Settings2, Terminal } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "../lib/utils";
 
@@ -7,10 +7,11 @@ export const PAGES: { id: PageId; label: string; desc: string; icon: LucideIcon 
   { id: "usage", label: "Usage", desc: "requests, providers, latency", icon: Gauge },
   { id: "providers", label: "Providers", desc: "OpenAI-compatible catalog + connections", icon: Network },
   { id: "combos", label: "Combos", desc: "ordered fallback chains", icon: Layers },
+  { id: "tools", label: "CLI tools", desc: "point any CLI at troy", icon: Terminal },
   { id: "settings", label: "Settings", desc: "routing & token savers", icon: Settings2 },
 ];
 
-export type PageId = "usage" | "providers" | "combos" | "settings";
+export type PageId = "usage" | "providers" | "combos" | "tools" | "settings";
 
 export function Sidebar({
   page,
@@ -42,7 +43,7 @@ export function Sidebar({
     <aside className="flex w-64 shrink-0 flex-col border-r border-border bg-card">
       <div className="flex items-center gap-2.5 px-6 pt-6 pb-5">
         <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary">
-          <img src="/favicon.svg" alt="troy" className="size-5" />
+          <img src="/favicon.svg" alt="troy" className="size-5 dark:invert" />
         </span>
         <span className="min-w-0">
           <span className="block text-[15px] leading-tight font-semibold tracking-tight">troy</span>
@@ -86,7 +87,7 @@ export function Sidebar({
 
       <div className="border-t border-border px-6 py-4">
         <p className="flex items-center gap-1.5 text-[10px] tracking-[0.08em] text-muted-foreground uppercase">
-          <span className="size-1.5 bg-aloe ring-1 ring-black/10" aria-hidden="true" />
+          <span className="size-1.5 bg-aloe ring-1 ring-black/10 dark:ring-white/10" aria-hidden="true" />
           router online
         </p>
         <p className="mt-1.5 truncate font-mono text-[11px] text-muted-foreground">

@@ -139,7 +139,7 @@ function RequestsTable({ rows, limit }: { rows?: LogRow[]; limit: number }) {
             <TableCell>
               <ModelCode model={r.model} />
             </TableCell>
-            <TableCell className={cn("font-mono text-xs", r.status === "200 OK" ? "text-emerald-600" : "text-red-600")}>
+            <TableCell className={cn("font-mono text-xs", r.status === "200 OK" ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")}>
               {r.status}
             </TableCell>
             <TableCell className="text-right font-mono tabular-nums">{r.latency_ms}</TableCell>
@@ -205,7 +205,7 @@ function PeriodPills() {
   }, [period]);
 
   return (
-    <div ref={wrapRef} className="relative inline-flex w-fit rounded-full border bg-white p-1">
+    <div ref={wrapRef} className="relative inline-flex w-fit rounded-full border bg-card p-1">
       <span
         aria-hidden="true"
         className={cn(
@@ -267,7 +267,7 @@ export function UsagePage() {
               <StatCard
                 label="Failed"
                 value={fmt.format(t.fail)}
-                valueClass={t.fail > 0 ? "text-red-600" : ""}
+                valueClass={t.fail > 0 ? "text-red-600 dark:text-red-400" : ""}
               />
               <StatCard label="Avg latency" value={t.requests ? short(t.avg_ms) : "—"} />
               <StatCard label="p95 latency" value={t.requests ? short(t.p95_ms) : "—"} />

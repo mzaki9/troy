@@ -42,6 +42,17 @@ const ROUTER_H = 68;
 const NODE_W = 190;
 const NODE_H = 44;
 
+interface Pal {
+  edge: string;
+  nodeFill: string;
+  nodeStroke: string;
+  ink: string;
+  paper: string;
+  routerIdle: string;
+}
+const LIGHT: Pal = { edge: "#d4d4d8", nodeFill: "#ffffff", nodeStroke: "#e4e4e7", ink: "#000000", paper: "#ffffff", routerIdle: "rgba(0,0,0,0.03)" };
+const DARK: Pal = { edge: "#3f3f46", nodeFill: "#1c1c21", nodeStroke: "#3a3a41", ink: "#f4f4f5", paper: "#0b0b0e", routerIdle: "rgba(255,255,255,0.05)" };
+
 interface Cam {
   x: number;
   y: number;
@@ -74,12 +85,13 @@ function point(p0: { x: number; y: number }, p: EdgeP["p"], t: number) {
 export function createTopology(
   canvas: HTMLCanvasElement,
   initial: TopoData = { activeCount: 0, providers: [] }
-): { setData(d: TopoData): void; destroy(): void } {
+): { setData(d: TopoData): void; setDark(v: boolean): void; destroy(): void } {
   const ctx = canvas.getContext("2d")!;
   const dpr = window.devicePixelRatio || 1;
   let data = initial;
   let w = 0;
   let h = 0;
+  let pal: Pal = LIGHT;
   const cam: Cam = { x: 0, y: 0, scale: 1 };
   const ring = new Map<string, { x: number; y: number }>();
   let raf = 0;
@@ -153,7 +165,7 @@ export function createTopology(
       const frac = (t * 0.6 + (i * 0.25 + 0.125)) % 1;
       const pt = point(e.p0, e.p, frac);
       const r = i % 2 ? 2.5 : 4;
-      ctx.fillStyle = i % 2 ? "#000000" : "#34d399";
+      ctx.fillStyle = i % 2 ? pal.ink : "#34d399";
       ctx.globalAlpha = 0.9;
       ctx.beginPath();
       ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
@@ -191,7 +203,7 @@ export function createTopology(
         ctx.globalAlpha = 1;
         break;
       default:
-        ctx.strokeStyle = "#d4d4d8";
+        ctx.strokeStyle = pal.edge;
         ctx.lineWidth = 1;
         ctx.globalAlpha = 0.9;
         strokeEdge(p.id);
@@ -213,15 +225,15 @@ export function createTopology(
       g.addColorStop(1, "rgba(193,251,212,0.95)");
       ctx.fillStyle = g;
     } else {
-      ctx.fillStyle = "rgba(0,0,0,0.03)";
+      ctx.fillStyle = pal.routerIdle;
     }
     rr(ctx, x, y, ROUTER_W, ROUTER_H, 6);
     ctx.fill();
-    ctx.strokeStyle = "#000000";
+    ctx.strokeStyle = pal.ink;
     ctx.lineWidth = active ? 2 : 1.5;
     ctx.stroke();
     ctx.restore();
-    ctx.fillStyle = "#000000";
+    ctx.fillStyle = pal.ink;
     ctx.font = "600 15px Geist, system-ui, sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
@@ -229,10 +241,10 @@ export function createTopology(
     const pill = { x: ROUTER_W / 2 - 4, y: -ROUTER_H / 2 - 2, w: 26, h: 18 };
     ctx.save();
     ctx.shadowBlur = 0;
-    ctx.fillStyle = "#000000";
+    ctx.fillStyle = pal.ink;
     rr(ctx, pill.x, pill.y, pill.w, pill.h, 3);
     ctx.fill();
-    ctx.fillStyle = "#ffffff";
+    ctx.fillStyle = pal.paper;
     ctx.font = "700 11px Geist, system-ui, sans-serif";
     ctx.fillText(String(data.activeCount), pill.x + pill.w / 2, pill.y + pill.h / 2 + 0.5);
     ctx.restore();
@@ -247,12 +259,12 @@ export function createTopology(
     ctx.save();
     ctx.shadowColor = p.state === "active" ? color : "transparent";
     ctx.shadowBlur = p.state === "active" ? 16 : 0;
-    ctx.fillStyle = "#ffffff";
+    ctx.fillStyle = pal.nodeFill;
     rr(ctx, x, y, NODE_W, NODE_H, 5);
     ctx.fill();
     ctx.shadowBlur = 0;
     ctx.lineWidth = p.state === "active" ? 2 : 1;
-    ctx.strokeStyle = p.state === "active" ? "#000000" : p.state === "error" ? "#ef4444" : p.state === "last" ? "#f59e0b" : "#e4e4e7";
+    ctx.strokeStyle = p.state === "active" ? pal.ink : p.state === "error" ? "#ef4444" : p.state === "last" ? "#f59e0b" : pal.nodeStroke;
     ctx.stroke();
     ctx.restore();
 
@@ -271,7 +283,7 @@ export function createTopology(
     ctx.fillText(p.label.slice(0, 2).toUpperCase(), chipX + 16, chipY + 17);
     ctx.restore();
 
-    ctx.fillStyle = p.state === "active" ? color : "#000000";
+    ctx.fillStyle = p.state === "active" ? color : pal.ink;
     ctx.font = "600 13px Geist, system-ui, sans-serif";
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
@@ -280,13 +292,13 @@ export function createTopology(
 
     if (p.state === "active") {
       const pulse = (performance.now() / 1000) % 1;
-      ctx.strokeStyle = "#000000";
+      ctx.strokeStyle = pal.ink;
       ctx.globalAlpha = 0.75 * (1 - pulse);
       ctx.beginPath();
       ctx.arc(x + NODE_W - 18, n.y, 4 + 6 * pulse, 0, Math.PI * 2);
       ctx.stroke();
       ctx.globalAlpha = 1;
-      ctx.fillStyle = "#000000";
+      ctx.fillStyle = pal.ink;
       ctx.beginPath();
       ctx.arc(x + NODE_W - 18, n.y, 4, 0, Math.PI * 2);
       ctx.fill();
@@ -368,6 +380,9 @@ export function createTopology(
     setData(d: TopoData) {
       data = d;
       fit();
+    },
+    setDark(v: boolean) {
+      pal = v ? DARK : LIGHT;
     },
     destroy() {
       cancelAnimationFrame(raf);
