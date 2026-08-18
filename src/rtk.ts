@@ -232,7 +232,7 @@ function porcelainHitRatio(head: string): boolean {
   return hits / nonEmpty.length >= 0.6;
 }
 
-export const FILTERS = { gitDiff, grep, ls, tree, find, gitStatus, gitLog, smartTruncate };
+const FILTERS = { gitDiff, grep, ls, tree, find, gitStatus, gitLog, smartTruncate };
 
 function autoDetectFilter(text: string): ((t: string) => string) | null {
   const head = headWindow(text);
@@ -276,10 +276,6 @@ function compressBlock(text: string | { type: string; text: string }[]): string 
     return text.map((b) => (b.type === "text" ? { ...b, text: compressText(b.text) } : b));
   }
   return text;
-}
-
-export interface RtkConfig {
-  on: boolean;
 }
 
 /** Compress tool-result content blocks. OpenAI `messages[]` and Claude `tool_result` blocks. */

@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "bun build dashboard/app.tsx --outdir dashboard/dist --minify --watch & tailwindcss -i dashboard/styles.css -o dashboard/dist/styles.css --minify --watch & bun --watch src/server.ts",
-    "start": "bun src/server.ts",
-    "build": "bun build dashboard/app.tsx --outdir dashboard/dist --minify && tailwindcss -i dashboard/styles.css -o dashboard/dist/styles.css --minify",
+    "dev": "bun build dashboard/app.tsx --outdir dashboard/dist --minify --watch & tailwindcss -i dashboard/styles.css -o dashboard/dist/styles.css --minify & bun --watch src/server.ts",
+    "start": "bun --smol src/server.ts",
+    "build": "NODE_ENV=production bun build dashboard/app.tsx --outdir dashboard/dist --minify && tailwindcss -i dashboard/styles.css -o dashboard/dist/styles.css --minify",
     "test": "bun test"
   },
   "dependencies": {

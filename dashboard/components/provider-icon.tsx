@@ -7,7 +7,6 @@ const FILE: Record<string, string> = {
   blackbox: "providers/blackbox.png",
   together: "providers/together.png",
   venice: "providers/venice.png",
-  "glm-cn": "providers/glm-cn.png",
   "xiaomi-mimo": "providers/xiaomi-mimo.png",
   // provider ids that outgrew their original brand name — reuse the existing logo
   zai: "providers/glm.svg",

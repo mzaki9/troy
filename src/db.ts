@@ -44,6 +44,7 @@ export class Store {
   private db: Database;
   private logQueue: [string, string, string, string | null, string, number, string][] = [];
   private flushTimer: ReturnType<typeof setInterval> | null = null;
+  private lastTrim = 0;
 
   constructor(path: string) {
     this.db = new Database(path);
@@ -119,29 +120,31 @@ export class Store {
     return this.db.query("SELECT * FROM connections ORDER BY provider ASC, priority ASC").all() as unknown as Connection[];
   }
 
-  addConnection(c: { provider: string; api_key: string; name?: string | null; base_url?: string | null; extra?: string; priority?: number }): string {
+  /** Providers that have at least one active key — one query, no N+1. */
+  activeProviderIds(): string[] {
+    return (this.db.query("SELECT DISTINCT provider FROM connections WHERE is_active = 1").all() as { provider: string }[]).map((r) => r.provider);
+  }
+
+  addConnection(c: { provider: string; api_key: string; name?: string | null; base_url?: string | null; extra?: string; priority?: number }): Connection {
     const id = crypto.randomUUID();
     const extra = c.extra ?? "{}";
     const priority = c.priority ?? 0;
-    this.db
+    return this.db
       .query(
-        "INSERT INTO connections (id, provider, api_key, name, base_url, extra, priority, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)"
+        "INSERT INTO connections (id, provider, api_key, name, base_url, extra, priority, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?) RETURNING *"
       )
-      .run(id, c.provider, c.api_key, c.name ?? null, c.base_url ?? null, extra, priority, new Date().toISOString());
-    return id;
+      .get(id, c.provider, c.api_key, c.name ?? null, c.base_url ?? null, extra, priority, new Date().toISOString()) as unknown as Connection;
   }
 
-  updateConnection(id: string, fields: Partial<Connection>) {
-    const cur = this.getConnection(id);
-    if (!cur) return;
-    const next = { ...cur, ...fields };
-    this.db
-      .query("UPDATE connections SET api_key=?, name=?, base_url=?, extra=?, priority=?, is_active=? WHERE id=?")
-      .run(next.api_key, next.name, next.base_url, next.extra, next.priority, next.is_active, id);
-  }
-
-  getConnection(id: string): Connection | undefined {
-    return this.db.query("SELECT * FROM connections WHERE id = ?").get(id) as unknown as Connection | undefined;
+  updateConnection(id: string, fields: Partial<Connection>): Connection | null {
+    // ponytail: COALESCE can't set a column to NULL; the dashboard always PUTs
+    // full objects, so that's fine. If null-clearing is ever needed, fall back
+    // to a merge-read (2 queries).
+    return this.db
+      .query(
+        "UPDATE connections SET api_key=COALESCE(?,api_key), name=COALESCE(?,name), base_url=COALESCE(?,base_url), extra=COALESCE(?,extra), priority=COALESCE(?,priority), is_active=COALESCE(?,is_active) WHERE id = ? RETURNING *"
+      )
+      .get(fields.api_key ?? null, fields.name ?? null, fields.base_url ?? null, fields.extra ?? null, fields.priority ?? null, fields.is_active ?? null, id) as unknown as Connection | null;
   }
 
   deleteConnection(id: string) {
@@ -160,13 +163,13 @@ export class Store {
     return r ? { ...r, models: JSON.parse(r.models) } : undefined;
   }
 
-  putCombo(name: string, models: string[]): void {
-    const existing = this.db.query("SELECT id FROM combos WHERE name = ?").get(name);
-    if (existing) {
-      this.db.query("UPDATE combos SET models = ? WHERE name = ?").run(JSON.stringify(models), name);
-    } else {
-      this.db.query("INSERT INTO combos (id, name, models) VALUES (?, ?, ?)").run(crypto.randomUUID(), name, JSON.stringify(models));
-    }
+  putCombo(name: string, models: string[]): { id: string; name: string; models: string[] } {
+    const row = this.db
+      .query(
+        "INSERT INTO combos (id, name, models) VALUES (?, ?, ?) ON CONFLICT (name) DO UPDATE SET models = excluded.models RETURNING id, name, models"
+      )
+      .get(crypto.randomUUID(), name, JSON.stringify(models)) as unknown as { id: string; name: string; models: string };
+    return { ...row, models: JSON.parse(row.models) };
   }
 
   deleteCombo(name: string) {
@@ -186,10 +189,9 @@ export class Store {
 
   putModel(spec: string): SavedModel {
     const createdAt = new Date().toISOString();
-    this.db
-      .query("INSERT INTO models (spec, created_at) VALUES (?, ?) ON CONFLICT (spec) DO NOTHING")
-      .run(spec, createdAt);
-    const row = this.db.query("SELECT created_at FROM models WHERE spec = ?").get(spec) as { created_at: string };
+    const row = this.db
+      .query("INSERT INTO models (spec, created_at) VALUES (?, ?) ON CONFLICT (spec) DO UPDATE SET spec = excluded.spec RETURNING created_at")
+      .get(spec, createdAt) as { created_at: string };
     const i = spec.indexOf("/");
     return { spec, provider: spec.slice(0, i), model: spec.slice(i + 1), created_at: row.created_at };
   }
@@ -253,13 +255,18 @@ export class Store {
   }
 
   flushLogs() {
-    if (this.logQueue.length === 0) return;
+    if (this.logQueue.length === 0 && !this.lastTrim) return;
     const batch = this.logQueue.splice(0, this.logQueue.length);
     this.db.transaction(() => {
       for (const row of batch) {
         this.db.query("INSERT INTO usage_history (ts, provider, model, combo, status, latency_ms, tokens) VALUES (?, ?, ?, ?, ?, ?, ?)").run(...row);
       }
     })();
+    // bound the table so stats/topology scans stay cheap forever
+    if (!this.lastTrim || Date.now() - this.lastTrim > 3600_000) {
+      this.lastTrim = Date.now();
+      this.db.query("DELETE FROM usage_history WHERE ts < ?").run(new Date(Date.now() - 30 * 864e5).toISOString());
+    }
   }
 
   listLogs(limit = 50) {

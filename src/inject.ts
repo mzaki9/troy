@@ -91,7 +91,7 @@ function appendToContent(content: unknown, prompt: string): unknown {
  * Append a style prompt to the system message. OpenAI messages[] shape.
  * Bare model passthrough for Claude-shaped body: system as string or array.
  */
-export function injectSystemPrompt(body: unknown, prompt: string): unknown {
+function injectSystemPrompt(body: unknown, prompt: string): unknown {
   const b = body as { system?: unknown; messages?: { role?: string; content?: unknown }[] };
   if (Array.isArray(b.messages)) {
     const sys = b.messages.find((m) => m?.role === "system" || m?.role === "developer");

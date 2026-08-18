@@ -1,25 +1,10 @@
-import { useState } from "react";
+import { Bot, Box, Check, Code2, Hammer, MousePointer2, Sparkles, TextCursorInput } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { Bot, Box, Check, Code2, Copy, Hammer, MousePointer2, Sparkles, TextCursorInput } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Badge } from "../ui/badge";
-import { Button } from "../ui/button";
 import { useApi, type LogRow, type SavedModel } from "../api";
+import { CopyButton } from "../copy-button";
 import { cn } from "../../lib/utils";
-
-function CopyButton({ text, label }: { text: string; label: string }) {
-  const [ok, setOk] = useState(false);
-  const copy = async () => {
-    await navigator.clipboard.writeText(text);
-    setOk(true);
-    setTimeout(() => setOk(false), 1500);
-  };
-  return (
-    <Button variant="ghost" size="icon" onClick={copy} aria-label={label} title={label} className="size-7">
-      {ok ? <Check className="size-3.5 text-emerald-400" /> : <Copy className="size-3.5" />}
-    </Button>
-  );
-}
 
 interface Tool {
   name: string;

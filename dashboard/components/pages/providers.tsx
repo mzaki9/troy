@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import { ArrowLeft, Brain, Check, ChevronsUpDown, Copy, Eye, EyeOff, KeyRound, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, Brain, Check, ChevronsUpDown, Eye, EyeOff, KeyRound, Plus, Trash2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { api, mask, useApi } from "../api";
 import type { Connection, ProviderCat, SavedModel } from "../api";
+import { CopyButton } from "../copy-button";
 import { ProviderIcon } from "../provider-icon";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "../ui/alert-dialog";
 import { Badge } from "../ui/badge";
@@ -47,32 +48,6 @@ function DeleteDialog({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
-  );
-}
-
-/** Copy text to clipboard with transient check feedback. */
-function useCopy() {
-  const [copied, setCopied] = useState<string | null>(null);
-  const copy = async (what: string, text: string) => {
-    await navigator.clipboard.writeText(text).catch(() => {});
-    setCopied(what);
-    setTimeout(() => setCopied((c) => (c === what ? null : c)), 1500);
-  };
-  return { copied, copy };
-}
-
-function CopyButton({ what, text, label }: { what: string; text: string; label: string }) {
-  const { copied, copy } = useCopy();
-  return (
-    <Button
-      variant="ghost"
-      size="icon"
-      onClick={() => copy(what, text)}
-      aria-label={label}
-      title={label}
-    >
-      {copied === what ? <Check className="size-4 text-green-600 dark:text-green-400" /> : <Copy className="size-4" />}
-    </Button>
   );
 }
 

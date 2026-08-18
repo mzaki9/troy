@@ -7,7 +7,6 @@ import { isReasoningModel } from "./reasoning";
 
 const PORT = Number(process.env.PORT ?? 20128);
 const DATA_DIR = process.env.TROY_DATA ?? "data";
-const ROOT = import.meta.dir;
 
 mkdirSync(DATA_DIR, { recursive: true });
 const store = new Store(DATA_DIR + "/troy.db");
@@ -63,10 +62,9 @@ function modelsList(): unknown[] {
   for (const m of store.listModels()) {
     out.push({ id: m.spec, object: "model", owned_by: m.provider, custom: true });
   }
+  const active = new Set(store.activeProviderIds());
   for (const pid of providerIds()) {
-    if (store.listConnections(pid).some((c) => c.is_active === 1)) {
-      out.push({ id: pid, object: "model", owned_by: pid });
-    }
+    if (active.has(pid)) out.push({ id: pid, object: "model", owned_by: pid });
   }
   return out;
 }
@@ -83,21 +81,31 @@ interface StatRow {
 const STATUS_OK = "200 OK";
 
 function stats(): unknown {
-  const t = store.raw
-    .query("SELECT COUNT(*) n, SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) ok, AVG(latency_ms) av FROM usage_history")
-    .get(STATUS_OK) as { n: number; ok: number; av: number } | undefined;
+  const byModel = store.raw
+    .query("SELECT provider, model, COUNT(*) n, SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) ok, AVG(latency_ms) av, MAX(ts) last FROM usage_history GROUP BY model, provider ORDER BY n DESC LIMIT 500")
+    .all(STATUS_OK) as unknown as StatRow[];
   const lats = (store.raw.query("SELECT latency_ms FROM usage_history WHERE latency_ms IS NOT NULL ORDER BY latency_ms ASC LIMIT 1000").all() as { latency_ms: number }[]).map((r) => r.latency_ms);
   const p95 = lats.length ? lats[Math.min(lats.length - 1, Math.floor(lats.length * 0.95))] : 0;
-  const byProvider = store.raw
-    .query("SELECT provider, COUNT(*) n, SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) ok, AVG(latency_ms) av FROM usage_history GROUP BY provider ORDER BY n DESC")
-    .all(STATUS_OK) as unknown as { provider: string; n: number; ok: number; av: number }[];
-  const byModel = store.raw
-    .query(
-      "SELECT provider, model, COUNT(*) n, SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) ok, AVG(latency_ms) av, MAX(ts) last FROM usage_history GROUP BY model, provider ORDER BY n DESC"
-    )
-    .all(STATUS_OK) as unknown as StatRow[];
+  // derive totals + byProvider from byModel — 2 queries instead of 4
+  let n = 0;
+  let ok = 0;
+  let w = 0;
+  const prov = new Map<string, { n: number; ok: number; w: number }>();
+  for (const r of byModel) {
+    n += r.n;
+    ok += r.ok;
+    w += r.n * r.av;
+    const p = prov.get(r.provider) ?? { n: 0, ok: 0, w: 0 };
+    p.n += r.n;
+    p.ok += r.ok;
+    p.w += r.n * r.av;
+    prov.set(r.provider, p);
+  }
+  const byProvider = [...prov.entries()]
+    .map(([provider, p]) => ({ provider, n: p.n, ok: p.ok, av: p.w / p.n }))
+    .sort((a, b) => b.n - a.n);
   return {
-    totals: { requests: t?.n ?? 0, ok: t?.ok ?? 0, fail: (t?.n ?? 0) - (t?.ok ?? 0), avg_ms: Math.round(t?.av ?? 0), p95_ms: Math.round(p95) },
+    totals: { requests: n, ok, fail: n - ok, avg_ms: n ? Math.round(w / n) : 0, p95_ms: Math.round(p95) },
     byProvider,
     byModel: byModel.map((r) => ({ provider: r.provider, model: r.model, requests: r.n, ok: r.ok, avg_ms: Math.round(r.av), last: r.last })),
   };
@@ -105,30 +113,15 @@ function stats(): unknown {
 
 function topology(windowS: number): unknown {
   const since = new Date(Date.now() - windowS * 1000).toISOString();
-  const rows = store.raw.query("SELECT provider, ts, status FROM usage_history WHERE ts >= ?").all(since) as { provider: string; ts: string; status: string }[];
-  const agg = new Map<string, { count: number; ok: number; last: number; lastOk: boolean }>();
-  let globalLast = 0;
-  let lastProvider = "";
-  for (const r of rows) {
-    const ts = Date.parse(r.ts);
-    const a = agg.get(r.provider) ?? { count: 0, ok: 0, last: 0, lastOk: false };
-    a.count += 1;
-    if (r.status === STATUS_OK) a.ok += 1;
-    if (ts > a.last) {
-      a.last = ts;
-      a.lastOk = r.status === STATUS_OK;
-    }
-    if (ts > globalLast) {
-      globalLast = ts;
-      lastProvider = r.provider;
-    }
-    agg.set(r.provider, a);
-  }
+  const rows = store.raw
+    .query("SELECT provider, COUNT(*) n, SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) ok, MAX(ts) last FROM usage_history WHERE ts >= ? GROUP BY provider")
+    .all(STATUS_OK, since) as unknown as { provider: string; n: number; ok: number; last: string }[];
+  const lastRow = store.raw.query("SELECT provider FROM usage_history WHERE ts >= ? ORDER BY ts DESC, id DESC LIMIT 1").get(since) as { provider: string } | null;
   const nowMs = Date.now();
-  const providers = [...agg.entries()].map(([id, a]) => {
-    const active = nowMs - a.last <= 10_000;
-    const state = active ? "active" : a.ok < a.count ? "error" : id === lastProvider ? "last" : "idle";
-    return { id, label: id, state, count: a.count, ok: a.ok };
+  const providers = rows.map((r) => {
+    const active = nowMs - Date.parse(r.last) <= 10_000;
+    const state = active ? "active" : r.ok < r.n ? "error" : r.provider === lastRow?.provider ? "last" : "idle";
+    return { id: r.provider, label: r.provider, state, count: r.n, ok: r.ok };
   });
   return { activeCount: providers.filter((p) => p.state === "active").length, providers };
 }
@@ -176,7 +169,6 @@ function staticFile(pathname: string): Response | null {
   if (rel === "app.js") rel = "dist/app.js";
   if (rel === "styles.css") rel = "dist/styles.css";
   const file = Bun.file(`${import.meta.dir}/../dashboard/${rel}`);
-  if (!file.exists()) return null;
   const ext = "." + rel.split(".").pop();
   return new Response(file, { headers: { "content-type": MIME[ext] ?? "application/octet-stream", "cache-control": "no-cache" } });
 }
@@ -297,12 +289,10 @@ const server: Server<undefined> = Bun.serve({
               return json({ error: `unknown provider: ${prov}` }, 400);
             }
           }
-          store.putCombo(body.name, body.models as string[]);
-          return json(store.getCombo(body.name));
+          return json(store.putCombo(body.name, body.models as string[]));
         });
       }
-    }
-    if (path.startsWith("/api/combos/") && request.method === "DELETE") {
+    }    if (path.startsWith("/api/combos/") && request.method === "DELETE") {
       store.deleteCombo(decodeURIComponent(path.slice("/api/combos/".length)));
       return json({ ok: true });
     }
@@ -343,8 +333,7 @@ const server: Server<undefined> = Bun.serve({
           const body = b as { provider?: string; api_key?: string; name?: string; base_url?: string; extra?: string; priority?: number } | null;
           if (!body?.provider || !body.api_key) return json({ error: "need provider + api_key" }, 400);
           if (!getProvider(body.provider)) return json({ error: `unknown provider: ${body.provider}` }, 400);
-          const id = store.addConnection({ provider: body.provider, api_key: body.api_key, name: body.name, base_url: body.base_url, extra: body.extra, priority: body.priority });
-          return json(store.getConnection(id));
+          return json(store.addConnection({ provider: body.provider, api_key: body.api_key, name: body.name, base_url: body.base_url, extra: body.extra, priority: body.priority }));
         });
       }
     }
@@ -353,8 +342,8 @@ const server: Server<undefined> = Bun.serve({
       if (request.method === "PUT") {
         return readBody(request).then((b) => {
           if (!b) return json({ error: "bad body" }, 400);
-          store.updateConnection(id, b as never);
-          return json(store.getConnection(id));
+          const row = store.updateConnection(id, b as never);
+          return json(row ?? { error: "unknown connection" }, row ? 200 : 404);
         });
       }
       if (request.method === "DELETE") {

@@ -17,10 +17,6 @@ export function initDark() {
   apply(saved ? saved === "1" : matchMedia("(prefers-color-scheme: dark)").matches);
 }
 
-export function isDark() {
-  return dark;
-}
-
 export function toggleDark() {
   dark = !dark;
   apply(dark);

@@ -62,12 +62,6 @@ export interface ProviderCat {
   aliases: string[];
   placeholders: string[];
 }
-export interface CustomProvider {
-  id: string;
-  name?: string;
-  baseUrl: string;
-  auth: string;
-}
 
 /** Poll an API endpoint; refetch() forces an immediate reload. */
 export function useApi<T>(path: string | null, opts: { interval?: number } = {}) {

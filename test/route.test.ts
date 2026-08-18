@@ -55,8 +55,8 @@ function makeDeps(overrides?: Partial<ChatDeps>): { store: Store; cd: CooldownSt
   return { store, cd, deps, logs };
 }
 
-function addConn(ctx: ReturnType<typeof makeDeps>, provider: string, key: string, priority = 0): string {
-  return ctx.store.addConnection({ provider, api_key: key, base_url: stubUrl, priority });
+function addConn(ctx: ReturnType<typeof makeDeps>, provider: string, key: string, priority = 0) {
+  ctx.store.addConnection({ provider, api_key: key, base_url: stubUrl, priority });
 }
 
 describe("multi-account rotation", () => {

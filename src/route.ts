@@ -4,7 +4,7 @@ import { compressMessages } from "./rtk";
 import { injectCaveman, injectPonytail, type CavemanLevel, type PonytailLevel } from "./inject";
 import { isReasoningModel, resolveEffortAlias } from "./reasoning";
 
-export const BACKOFF_CONFIG = { base: 2000, max: 300000, maxLevel: 15 };
+const BACKOFF_CONFIG = { base: 2000, max: 300000, maxLevel: 15 };
 const TRANSIENT_COOLDOWN_MS = 30000;
 const COOLDOWN_LONG_MS = 120000;
 const COOLDOWN_SHORT_MS = 5000;
@@ -21,7 +21,7 @@ const OPENCODE_FREE_MODELS = new Set([
 ]);
 
 /** Free if `-free` suffix or on the known list; unknown ⇒ premium (fail-safe). */
-export function isFreeOpencodeModel(model: string, provider: string): boolean {
+function isFreeOpencodeModel(model: string, provider: string): boolean {
   if (provider !== "opencode") return true;
   if (model.endsWith("-free")) return true;
   return OPENCODE_FREE_MODELS.has(model);
@@ -109,7 +109,7 @@ export class CooldownStore {
   }
 }
 
-export function classify(status: number, errText: string, backoffLevel = 0): { cooldownMs: number; newBackoffLevel: number } {
+function classify(status: number, errText: string, backoffLevel = 0): { cooldownMs: number; newBackoffLevel: number } {
   const lower = String(errText ?? "").toLowerCase();
   if (/request not allowed/.test(lower)) return { cooldownMs: COOLDOWN_SHORT_MS, newBackoffLevel: backoffLevel };
   const backsOff = ERROR_TEXT_BACKOFF.some((r) => lower.includes(r)) || status === 429;
