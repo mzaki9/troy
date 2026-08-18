@@ -14,6 +14,7 @@ const FILE: Record<string, string> = {
   "zai-cn": "providers/glm-cn.png",
   alibaba: "providers/alims-intl.svg",
   "alibaba-token-plan": "providers/alitp-intl.svg",
+  "command-code": "providers/command.svg",
 };
 
 export function providerIconSrc(id: string): string {
