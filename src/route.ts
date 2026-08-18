@@ -2,6 +2,7 @@ import { getProvider, inferProvider, type Provider } from "./registry";
 import type { Store, Connection } from "./db";
 import { compressMessages } from "./rtk";
 import { injectCaveman, injectPonytail, type CavemanLevel, type PonytailLevel } from "./inject";
+import { isReasoningModel, resolveEffortAlias } from "./reasoning";
 
 export const BACKOFF_CONFIG = { base: 2000, max: 300000, maxLevel: 15 };
 const TRANSIENT_COOLDOWN_MS = 30000;
@@ -220,12 +221,21 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
   let lastStatus = 502;
 
   for (const spec of chain) {
-    const { provider, model } = parseModelStr(spec);
+    const { provider, model: rawModel } = parseModelStr(spec);
+    const { model, effort } = resolveEffortAlias(rawModel);
     const def = getProvider(provider);
     if (!def) {
       lastError = `Unknown provider: ${provider}`;
       lastStatus = 404;
       continue;
+    }
+    // thinking setup — effort aliases inject reasoning_effort ("o3-mini-high"),
+    // and it is silently dropped for non-reasoning models (OmniRoute behavior)
+    const effBody: Record<string, unknown> = { ...body, model };
+    if (isReasoningModel(model)) {
+      if (effort) effBody.reasoning_effort = effort;
+    } else {
+      delete effBody.reasoning_effort;
     }
     if (def.auth === "none" && !isFreeOpencodeModel(model, def.id)) {
       lastError = `Model '${model}' requires an API key — use 'opencode-go' with a zen key or pick a free-tier model`;
@@ -252,7 +262,7 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
 
       let res: Response;
       try {
-        res = await forward({ ...body, model }, conn, def, deps.signal);
+        res = await forward(effBody, conn, def, deps.signal);
       } catch (err) {
         const msg = err instanceof Error ? err.message : "network error";
         deps.cooldowns.fail(conn.id, model, 0, msg);

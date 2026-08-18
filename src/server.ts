@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { Store } from "./db";
 import { buildBaseUrl, CooldownStore, handleChat, type ChatDeps } from "./route";
 import { customProviderIds, getProvider, providerIds, registerCustomProvider, unregisterCustomProvider, type Provider } from "./registry";
+import { isReasoningModel } from "./reasoning";
 
 const PORT = Number(process.env.PORT ?? 20128);
 const DATA_DIR = process.env.TROY_DATA ?? "data";
@@ -58,6 +59,9 @@ function modelsList(): unknown[] {
   const out: unknown[] = [];
   for (const combo of store.listCombos()) {
     out.push({ id: combo.name, object: "model", owned_by: "troy" });
+  }
+  for (const m of store.listModels()) {
+    out.push({ id: m.spec, object: "model", owned_by: m.provider, custom: true });
   }
   for (const pid of providerIds()) {
     if (store.listConnections(pid).some((c) => c.is_active === 1)) {
@@ -221,9 +225,33 @@ const server: Server<undefined> = Bun.serve({
         .then(async (res) => {
           if (!res.ok) return json({ error: `upstream ${res.status}`, url: modelsUrl, models: [] }, 502);
           const data = (await res.json()) as { data?: { id: string; name?: string }[] };
-          return json({ url: modelsUrl, models: (data.data ?? []).map((m) => ({ id: m.id, name: m.name ?? m.id })) });
+          return json({
+            url: modelsUrl,
+            models: (data.data ?? []).map((m) => ({ id: m.id, name: m.name ?? m.id, thinking: isReasoningModel(m.id) })),
+          });
         })
         .catch((e: unknown) => json({ error: e instanceof Error ? e.message : String(e), url: modelsUrl, models: [] }, 502));
+    }
+
+    if (path === "/api/models") {
+      if (request.method === "GET") {
+        return json(store.listModels().map((m) => ({ ...m, thinking: isReasoningModel(m.model) })));
+      }
+      if (request.method === "POST") {
+        return readBody(request).then((b) => {
+          const body = b as { provider?: string; model?: string } | null;
+          const provider = body?.provider ?? "";
+          const model = body?.model?.trim() ?? "";
+          if (!getProvider(provider)) return json({ error: `unknown provider: ${provider}` }, 400);
+          if (!model) return json({ error: "model id required" }, 400);
+          const m = store.putModel(`${provider}/${model}`);
+          return json({ ...m, thinking: isReasoningModel(m.model) });
+        });
+      }
+    }
+    if (path.startsWith("/api/models/") && request.method === "DELETE") {
+      store.deleteModel(decodeURIComponent(path.slice("/api/models/".length)));
+      return json({ ok: true });
     }
 
     if (path === "/api/settings") {

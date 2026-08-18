@@ -212,3 +212,52 @@ describe("opencode free gate", () => {
     expect(res.status).toBe(402);
   });
 });
+
+describe("reasoning effort (thinking mode)", () => {
+  test("effort alias suffix → base model + reasoning_effort", async () => {
+    const ctx = makeDeps();
+    addConn(ctx, "deepseek", "echo");
+    const res = await handleChat({ model: "deepseek/deepseek-reasoner-high", messages: [] }, ctx.deps);
+    expect(res.status).toBe(200);
+    const p = lastPayload as { model: string; reasoning_effort?: string };
+    expect(p.model).toBe("deepseek-reasoner");
+    expect(p.reasoning_effort).toBe("high");
+  });
+
+  test("alias not stripped from non-reasoning base ids", async () => {
+    const ctx = makeDeps();
+    addConn(ctx, "openai", "echo");
+    const res = await handleChat({ model: "openai/gpt-4o-high", messages: [] }, ctx.deps);
+    expect(res.status).toBe(200);
+    const p = lastPayload as { model: string; reasoning_effort?: string };
+    expect(p.model).toBe("gpt-4o-high");
+    expect(p.reasoning_effort).toBeUndefined();
+  });
+
+  test("client reasoning_effort dropped for non-reasoning models", async () => {
+    const ctx = makeDeps();
+    addConn(ctx, "openai", "echo");
+    await handleChat({ model: "openai/gpt-4o", reasoning_effort: "high", messages: [] }, ctx.deps);
+    const p = lastPayload as { reasoning_effort?: string };
+    expect(p.reasoning_effort).toBeUndefined();
+  });
+
+  test("client reasoning_effort preserved for reasoning models", async () => {
+    const ctx = makeDeps();
+    addConn(ctx, "openai", "echo");
+    await handleChat({ model: "openai/o3-mini", reasoning_effort: "high", messages: [] }, ctx.deps);
+    const p = lastPayload as { model: string; reasoning_effort?: string };
+    expect(p.model).toBe("o3-mini");
+    expect(p.reasoning_effort).toBe("high");
+  });
+
+  test("effort alias works inside combos", async () => {
+    const ctx = makeDeps();
+    ctx.store.putCombo("think", ["openai/o3-mini-high"]);
+    addConn(ctx, "openai", "echo");
+    await handleChat({ model: "think", messages: [] }, ctx.deps);
+    const p = lastPayload as { model: string; reasoning_effort?: string };
+    expect(p.model).toBe("o3-mini");
+    expect(p.reasoning_effort).toBe("high");
+  });
+});

@@ -19,6 +19,13 @@ export interface Combo {
   models: string[];
 }
 
+export interface SavedModel {
+  spec: string;
+  provider: string;
+  model: string;
+  created_at: string;
+}
+
 export interface Settings {
   rtk_on: number;
   caveman_level: string;
@@ -57,6 +64,10 @@ export class Store {
         id TEXT PRIMARY KEY,
         name TEXT UNIQUE NOT NULL,
         models TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS models (
+        spec TEXT PRIMARY KEY,
+        created_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS kv (
         scope TEXT NOT NULL,
@@ -160,6 +171,31 @@ export class Store {
 
   deleteCombo(name: string) {
     this.db.query("DELETE FROM combos WHERE name = ?").run(name);
+  }
+
+  // ---- desired models ----
+
+  /** List desired models ("provider/model" specs), oldest first. */
+  listModels(): SavedModel[] {
+    const rows = this.db.query("SELECT * FROM models ORDER BY created_at ASC").all() as { spec: string; created_at: string }[];
+    return rows.map((r) => {
+      const i = r.spec.indexOf("/");
+      return { spec: r.spec, provider: r.spec.slice(0, i), model: r.spec.slice(i + 1), created_at: r.created_at };
+    });
+  }
+
+  putModel(spec: string): SavedModel {
+    const createdAt = new Date().toISOString();
+    this.db
+      .query("INSERT INTO models (spec, created_at) VALUES (?, ?) ON CONFLICT (spec) DO NOTHING")
+      .run(spec, createdAt);
+    const row = this.db.query("SELECT created_at FROM models WHERE spec = ?").get(spec) as { created_at: string };
+    const i = spec.indexOf("/");
+    return { spec, provider: spec.slice(0, i), model: spec.slice(i + 1), created_at: row.created_at };
+  }
+
+  deleteModel(spec: string) {
+    this.db.query("DELETE FROM models WHERE spec = ?").run(spec);
   }
 
   // ---- settings ----

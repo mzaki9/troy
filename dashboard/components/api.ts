@@ -19,6 +19,13 @@ export interface Combo {
   name: string;
   models: string[];
 }
+export interface SavedModel {
+  spec: string;
+  provider: string;
+  model: string;
+  created_at: string;
+  thinking?: boolean;
+}
 export interface Settings {
   rtk_on: number;
   caveman_level: string;

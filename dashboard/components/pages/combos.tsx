@@ -1,14 +1,16 @@
 import { useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import { ArrowRight, Plus, Trash2 } from "lucide-react";
+import { ArrowRight, Brain, ChevronsUpDown, Plus, Trash2, X } from "lucide-react";
 import { api, useApi } from "../api";
-import type { Combo } from "../api";
+import type { Combo, SavedModel } from "../api";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "../ui/alert-dialog";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "../ui/card";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "../ui/command";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { Skeleton } from "../ui/skeleton";
 
 function DeleteComboDialog({
@@ -46,25 +48,37 @@ function DeleteComboDialog({
 
 export function CombosPage() {
   const combos = useApi<Combo[]>("/api/combos");
+  const desired = useApi<SavedModel[]>("/api/models");
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
-  const [models, setModels] = useState("");
+  const [added, setAdded] = useState<string[]>([]);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
 
   const remove = async (c: Combo) => {
     await api(`/api/combos/${encodeURIComponent(c.name)}`, { method: "DELETE" });
     combos.refetch();
   };
 
+  const addModel = (spec: string) => {
+    if (!spec || added.includes(spec)) return;
+    setAdded((a) => [...a, spec]);
+  };
+
+  const addRaw = (q: string) => {
+    if (!q.includes("/")) return;
+    addModel(q.trim());
+  };
+
   const add = async (e: FormEvent) => {
     e.preventDefault();
-    const modelList = models.trim().split(/\s+/).filter(Boolean);
-    if (!name.trim() || modelList.length === 0) return;
+    if (!name.trim() || added.length === 0) return;
     await api("/api/combos", {
       method: "POST",
-      body: JSON.stringify({ name: name.trim(), models: modelList }),
+      body: JSON.stringify({ name: name.trim(), models: added }),
     });
     setName("");
-    setModels("");
+    setAdded([]);
     setAdding(false);
     combos.refetch();
   };
@@ -131,17 +145,74 @@ export function CombosPage() {
               />
             </div>
             <div className="flex min-w-48 flex-[2] flex-col gap-1.5">
-              <Label htmlFor="comboModels">
-                models — <span className="font-mono text-xs">"provider/model"</span> space separated
+              <Label>
+                models — pick from desired, or type <span className="font-mono text-xs">"provider/model"</span>
               </Label>
-              <Input
-                id="comboModels"
-                value={models}
-                onChange={(e) => setModels(e.target.value)}
-                placeholder="openai/gpt-4o-mini deepseek/deepseek-chat groq/llama-3.3-70b"
-              />
+              <div className="flex flex-wrap items-center gap-1.5">
+                {added.map((m) => (
+                  <Badge key={m} variant="secondary" className="gap-1.5 py-1 font-mono text-[11px] font-normal">
+                    {m}
+                    <button
+                      type="button"
+                      aria-label={`remove ${m}`}
+                      className="text-muted-foreground hover:text-destructive"
+                      onClick={() => setAdded((a) => a.filter((x) => x !== m))}
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </Badge>
+                ))}
+                <Popover
+                  open={open}
+                  onOpenChange={(o) => {
+                    setOpen(o);
+                    if (o) desired.refetch();
+                  }}
+                >
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={open}
+                      className="font-mono text-xs"
+                    >
+                      {added.length === 0 ? "pick a model…" : "add more…"}
+                      <ChevronsUpDown className="size-4 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[min(380px,calc(100vw-2rem))] p-0" align="start">
+                    <Command>
+                      <CommandInput placeholder="search desired models…" onValueChange={setQuery} />
+                      <CommandList>
+                        <CommandEmpty>
+                          <CommandItem value={query} onSelect={() => addRaw(query)}>
+                            {query.includes("/") ? (
+                              <>
+                                use “<span className="font-mono">{query}</span>”
+                              </>
+                            ) : (
+                              <span className="text-muted-foreground">
+                                type as <span className="font-mono">provider/model</span> to add a raw model
+                              </span>
+                            )}
+                          </CommandItem>
+                        </CommandEmpty>
+                        <CommandGroup heading="desired">
+                          {(desired.data ?? []).map((m) => (
+                            <CommandItem key={m.spec} value={m.spec} onSelect={() => addModel(m.spec)}>
+                              <span className="min-w-0 flex-1 truncate font-mono text-xs">{m.spec}</span>
+                              {m.thinking ? <Brain className="size-3 shrink-0 text-muted-foreground" /> : null}
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+              </div>
             </div>
-            <Button type="submit" disabled={!name.trim() || !models.trim()}>
+            <Button type="submit" disabled={!name.trim() || added.length === 0}>
               save
             </Button>
             <Button type="button" variant="ghost" onClick={() => setAdding(false)}>
