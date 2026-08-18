@@ -69,7 +69,7 @@ ${entries}
   },
   {
     name: "Codex CLI",
-    desc: "~/.codex/config.toml",
+    desc: "~/.codex/config.toml — uses the responses API",
     icon: Box,
     lang: "toml",
     code: (b, m) => `model_provider = "troy"
@@ -78,7 +78,7 @@ model = "${m}"
 [model_providers.troy]
 name = "Troy"
 base_url = "${b}/v1"
-wire_api = "chat"`,
+wire_api = "responses"`,
   },
   {
     name: "Gemini CLI",

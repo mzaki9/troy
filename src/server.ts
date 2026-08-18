@@ -4,6 +4,7 @@ import { Store } from "./db";
 import { buildBaseUrl, CooldownStore, handleChat, type ChatDeps } from "./route";
 import { customProviderIds, getProvider, providerIds, registerCustomProvider, unregisterCustomProvider, type Provider } from "./registry";
 import { isReasoningModel } from "./reasoning";
+import { handleResponses } from "./responses";
 
 const PORT = Number(process.env.PORT ?? 20128);
 const DATA_DIR = process.env.TROY_DATA ?? "data";
@@ -147,6 +148,14 @@ async function handleChatRequest(request: Request, server: { timeout: (req: Requ
   return res;
 }
 
+async function handleResponsesRequest(request: Request, server: { timeout: (req: Request, ms: number) => void }): Promise<Response> {
+  const body = await readBody(request);
+  if (!body) return json({ error: { message: "Invalid JSON body", type: "invalid_request_error" } }, 400);
+  const res = await handleResponses(body as Record<string, unknown>, buildDeps(request));
+  if (res.body) server.timeout(request, 0);
+  return res;
+}
+
 function cors(request: Request): Response {
   const origin = request.headers.get("origin");
   return new Response(null, {
@@ -181,7 +190,8 @@ const server: Server<undefined> = Bun.serve({
 
     if (request.method === "OPTIONS") return cors(request);
 
-    if (request.method === "POST" && (path === "/v1/chat/completions" || path === "/v1/messages")) {
+    if (request.method === "POST" && (path === "/v1/chat/completions" || path === "/v1/messages" || path === "/v1/responses")) {
+      if (path === "/v1/responses") return handleResponsesRequest(request, server);
       return handleChatRequest(request, server);
     }
 
