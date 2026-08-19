@@ -161,6 +161,14 @@ function ProviderDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const placeholderKeys = p?.placeholders ?? [];
 
   const [revealed, setRevealed] = useState<Set<string>>(new Set());
+  // bump to refetch the model catalog when keys change (add/toggle/remove)
+  const [modelTick, setModelTick] = useState(0);
+
+  const refetchAll = () => {
+    connections.refetch();
+    providers.refetch();
+    setModelTick((n) => n + 1);
+  };
 
   const toggleReveal = (cid: string) =>
     setRevealed((prev) => {
@@ -175,14 +183,12 @@ function ProviderDetail({ id, onBack }: { id: string; onBack: () => void }) {
       method: "PUT",
       body: JSON.stringify({ is_active: c.is_active ? 0 : 1 }),
     });
-    connections.refetch();
-    providers.refetch();
+    refetchAll();
   };
 
   const remove = async (c: Connection) => {
     await api(`/api/connections/${c.id}`, { method: "DELETE" });
-    connections.refetch();
-    providers.refetch();
+    refetchAll();
   };
 
   return (
@@ -307,21 +313,18 @@ function ProviderDetail({ id, onBack }: { id: string; onBack: () => void }) {
           <AddKeyDialog
             providerId={id}
             placeholderKeys={placeholderKeys}
-            onAdded={() => {
-              connections.refetch();
-              providers.refetch();
-            }}
+            onAdded={refetchAll}
           />
         </div>
       </Card>
 
-      <ModelsCard providerId={id} />
+      <ModelsCard providerId={id} refresh={modelTick} />
     </div>
   );
 }
 
 /** Live model catalog for a provider — auto-fetched, picking a model saves it as your choice. */
-function ModelsCard({ providerId }: { providerId: string }) {
+function ModelsCard({ providerId, refresh = 0 }: { providerId: string; refresh?: number }) {
   const saved = useApi<SavedModel[]>("/api/models");
   const [models, setModels] = useState<{ id: string; name: string; thinking?: boolean }[] | null>(null);
   const [url, setUrl] = useState<string | null>(null);
@@ -356,7 +359,7 @@ function ModelsCard({ providerId }: { providerId: string }) {
   useEffect(() => {
     fetchModels();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [providerId]);
+  }, [providerId, refresh]);
 
   return (
     <Card>
