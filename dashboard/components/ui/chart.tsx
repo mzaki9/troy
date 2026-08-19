@@ -6,8 +6,9 @@ import { cn } from "../../lib/utils";
  * shadcn/ui-style chart primitives (ChartContainer + ChartTooltipContent)
  * on top of Recharts. Self-contained — no framer-motion dependency.
  *
- * Usage mirrors shadcn's charts: define a ChartConfig, render Bars with
- * `fill="var(--color-<key>)"`, colors come from the config via CSS vars.
+ * Colors are passed as literal hex on each series (fill="<hex>"), not CSS
+ * vars: model names contain characters (/, .) that are invalid in CSS
+ * variable names, which silently dropped the whole style rule.
  */
 
 export interface ChartConfigItem {
@@ -29,6 +30,7 @@ export interface ChartTooltipPayloadEntry {
   name?: string;
   value?: number | string;
   color?: string;
+  fill?: string;
   payload?: Record<string, unknown>;
   [k: string]: unknown;
 }
@@ -49,44 +51,22 @@ function getPayloadConfigFromPayload(
   return config[configLabelKey];
 }
 
-function ChartStyle({ id, config }: { id: string; config: ChartConfig }) {
-  const colorConfig = Object.entries(config).filter(([, item]) => item.color);
-  if (!colorConfig.length) return null;
-  return (
-    <style
-      // biome-ignore lint/security/noDangerouslySetInnerHtml: static CSS vars from ChartConfig (never user input)
-      dangerouslySetInnerHTML={{
-        __html: `[data-chart="${id}"] { ${colorConfig
-          .map(([key, item]) => `--color-${key}: ${item.color};`)
-          .join(" ")} }`,
-      }}
-    />
-  );
-}
-
 export interface ChartContainerProps extends React.HTMLAttributes<HTMLDivElement> {
   config: ChartConfig;
   children: React.ReactElement;
 }
 
-/**
- * Responsive chart frame that injects the config's CSS vars for `var(--color-*)` fills.
- * Set frame size via className (e.g. "h-[320px]").
- */
-export function ChartContainer({ id, className, children, config, ...props }: ChartContainerProps) {
-  const uniqueId = React.useId();
-  const chartId = `chart-${id ?? uniqueId.replace(/:/g, "")}`;
+/** Responsive chart frame. Set the frame size via className (e.g. "h-[320px]"). */
+export function ChartContainer({ className, children, config, ...props }: ChartContainerProps) {
   return (
     <ChartContext.Provider value={{ config }}>
       <div
-        data-chart={chartId}
         className={cn(
           "flex justify-center text-xs [&_.recharts-cartesian-axis-tick_text]:fill-muted-foreground [&_.recharts-cartesian-grid_line]:stroke-foreground/10 [&_.recharts-rectangle.recharts-tooltip-cursor]:fill-muted/30 [&_.recharts-surface]:outline-none",
           className,
         )}
         {...props}
       >
-        <ChartStyle id={chartId} config={config} />
         <RechartsPrimitive.ResponsiveContainer>{children}</RechartsPrimitive.ResponsiveContainer>
       </div>
     </ChartContext.Provider>
@@ -160,7 +140,8 @@ export function ChartTooltipContent({
         {payload.map((item, index) => {
           const key = `${nameKey ?? item?.name ?? item?.dataKey ?? "value"}`;
           const itemConfig = getPayloadConfigFromPayload(config, item, key);
-          const indicatorColor = itemConfig?.color ?? color ?? "#a1a1aa";
+          // prefer the series' actual fill (literal hex), then config color
+          const indicatorColor = item?.fill ?? item?.color ?? itemConfig?.color ?? color ?? "#a1a1aa";
           const value = item?.value;
           return (
             <div key={String(item?.dataKey ?? index)} className="flex w-full flex-wrap items-center gap-2">

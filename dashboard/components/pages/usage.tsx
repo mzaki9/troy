@@ -170,7 +170,7 @@ function DailyChart({ data }: { data?: DailyData }) {
               key={k}
               dataKey={k}
               stackId="a"
-              fill={`var(--color-${k})`}
+              fill={config[k]?.color ?? "#a1a1aa"}
               radius={i === keys.length - 1 ? [3, 3, 0, 0] : [0, 0, 0, 0]}
             />
           ))}
