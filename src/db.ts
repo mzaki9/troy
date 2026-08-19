@@ -57,6 +57,10 @@ export class Store {
     this.db = new Database(path);
     this.db.run("PRAGMA journal_mode = WAL;");
     this.db.run("PRAGMA synchronous = NORMAL;");
+    // memory budget: this proxy owns no hot dataset — cap the page cache at ~1 MiB
+    // and checkpoint WAL often so the -wal file stays tiny
+    this.db.run("PRAGMA cache_size = -1024;");
+    this.db.run("PRAGMA wal_autocheckpoint = 500;");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS connections (
         id TEXT PRIMARY KEY,

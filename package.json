@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "bun build dashboard/app.tsx --outdir dashboard/dist --minify --watch & tailwindcss -i dashboard/styles.css -o dashboard/dist/styles.css --minify & bun --watch src/server.ts",
+    "dev": "bun build dashboard/app.tsx --outdir dashboard/dist --minify --watch & tailwindcss -i dashboard/styles.css -o dashboard/dist/styles.css --minify & bun --smol --watch src/server.ts",
     "start": "bun --smol src/server.ts",
     "build": "NODE_ENV=production bun build dashboard/app.tsx --outdir dashboard/dist --minify && tailwindcss -i dashboard/styles.css -o dashboard/dist/styles.css --minify",
     "lint": "biome check src dashboard test",

@@ -1,0 +1,5 @@
+# Route bun's automatic-JSX imports (always jsxDEV, even in prod builds) to the
+# shim that re-exports the production-safe jsx from react/jsx-runtime.
+# See dashboard/jsx-dev-runtime.shim.ts.
+[alias]
+"react/jsx-dev-runtime" = "./dashboard/jsx-dev-runtime.shim.ts"

@@ -219,6 +219,14 @@ function staticFile(pathname: string): Response | null {
   });
 }
 
+/** Idle GC: return heap pages to the OS when the proxy is quiet. `--smol` lowers
+ * the collection thresholds; this nudges a full collect + compaction so RSS
+ * stays at the floor instead of growing with burst traffic. */
+let lastActivity = Date.now();
+setInterval(() => {
+  if (Date.now() - lastActivity > 30_000) Bun.gc(true);
+}, 60_000).unref();
+
 /** The OpenAI-compatible surface CLI tools talk to — everything under /v1. */
 function isV1Path(path: string, method: string): boolean {
   if (method === "POST") {
@@ -233,6 +241,7 @@ function isV1Path(path: string, method: string): boolean {
 const server: Server<undefined> = Bun.serve({
   port: PORT,
   fetch(request): Response | Promise<Response> {
+    lastActivity = Date.now();
     const url = new URL(request.url);
     const path = url.pathname;
 
