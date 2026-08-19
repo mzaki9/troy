@@ -6,11 +6,21 @@ const model = "openai/gpt-4o";
 
 describe("CLI tool catalog", () => {
   test("exposes only the supported integrations", () => {
-    expect(CLI_TOOLS.map((tool) => tool.name)).toEqual(["Hermes", "Codex CLI", "Cursor", "OpenCode"]);
+    expect(CLI_TOOLS.map((tool) => tool.name)).toEqual([
+      "Claude Code",
+      "Hermes",
+      "Codex CLI",
+      "Cursor",
+      "OpenCode",
+    ]);
   });
 
   test("maps each integration to its native endpoint/config format", () => {
     const snippets = Object.fromEntries(CLI_TOOLS.map((tool) => [tool.name, tool.code(base, model, [model])]));
+
+    expect(snippets["Claude Code"]).toContain(`ANTHROPIC_BASE_URL=${base}`);
+    expect(snippets["Claude Code"]).toContain(`ANTHROPIC_MODEL=${model}`);
+    expect(snippets["Claude Code"]).toContain("ANTHROPIC_AUTH_TOKEN=sk-troy");
 
     expect(snippets.Hermes).toContain(`base_url: "${base}/v1"`);
     expect(snippets.Hermes).toContain(`default: "${model}"`);

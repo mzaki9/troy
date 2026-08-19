@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Box, Code2, MousePointer2, Sparkles } from "lucide-react";
+import { Bot, Box, Code2, MousePointer2, Sparkles } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Badge } from "../ui/badge";
@@ -21,6 +21,19 @@ export interface CliTool {
  * Shapes mapped 1:1 from OmniRoute's CLI tool catalog (setup-codex /
  * setup-opencode / setup-cursor / Hermes Agent config at $HERMES_HOME). */
 export const CLI_TOOLS: CliTool[] = [
+  {
+    name: "Claude Code",
+    desc: "env vars — no config file needed (base URL at root; /v1/messages appended)",
+    icon: Bot,
+    lang: "bash",
+    code: (b, m, all) => {
+      const small = all[1] ? `export ANTHROPIC_SMALL_FAST_MODEL=${all[1]}\n` : "";
+      return `export ANTHROPIC_BASE_URL=${b}
+export ANTHROPIC_AUTH_TOKEN=sk-troy
+export ANTHROPIC_MODEL=${m}
+${small}claude`;
+    },
+  },
   {
     name: "Hermes",
     desc: "~/.hermes/config.yaml — OpenAI-compatible endpoint",
@@ -106,7 +119,7 @@ export function ToolsPage() {
             </Badge>
           </div>
           <CardDescription>
-            troy speaks OpenAI-compatible API — point Hermes, Codex CLI, Cursor, or OpenCode at it. No key needed:
+            troy speaks OpenAI-compatible API + Anthropic /v1/messages — point Claude Code, Hermes, Codex CLI, Cursor, or OpenCode at it. No key needed:
             troy uses your stored connection keys. The `sk-troy` in the snippets is a placeholder.
           </CardDescription>
           {chosen.length > 0 ? (
@@ -136,7 +149,7 @@ export function ToolsPage() {
           </div>
           <p className="text-[11px] text-muted-foreground">
             {chosen.length > 0
-              ? `OpenCode lists every chosen model; Hermes, Codex, and Cursor take one model — ${model}.`
+              ? `OpenCode lists every chosen model; Claude Code gets main + fast model; Hermes, Codex, and Cursor take one model — ${model}.`
               : lastUsed
                 ? `no chosen models yet — snippets use your last-used model ${model}. Pick models in the providers page and they appear here automatically.`
                 : `no chosen models or usage yet — snippets use ${model} until you pick models in the providers page.`}

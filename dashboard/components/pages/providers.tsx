@@ -228,7 +228,8 @@ function ProviderDetail({ id, onBack }: { id: string; onBack: () => void }) {
           <p className="mt-2 text-[11px] text-muted-foreground">
             OpenAI-compatible endpoint — Hermes and OpenCode use{" "}
             <code className="font-mono">{location.origin}/v1</code>, Codex uses the responses API, and
-            Cursor points at the OpenAI base URL in-app. See the CLI tools
+            Cursor points at the OpenAI base URL in-app; Claude Code uses{" "}
+            <code className="font-mono">{location.origin}/v1/messages</code>. See the CLI tools
             page for ready-to-copy configs and use <code className="font-mono">{id}/…</code> as the model.
           </p>
         </CardContent>
