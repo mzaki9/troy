@@ -1,12 +1,14 @@
-import { Bot, Box, Check, Code2, Hammer, MousePointer2, Sparkles, TextCursorInput } from "lucide-react";
+import { useState } from "react";
+import { Box, Code2, MousePointer2, Sparkles } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Badge } from "../ui/badge";
 import { useApi, type LogRow, type SavedModel } from "../api";
 import { CopyButton } from "../copy-button";
 import { cn } from "../../lib/utils";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 
-interface Tool {
+export interface CliTool {
   name: string;
   desc: string;
   icon: LucideIcon;
@@ -15,19 +17,44 @@ interface Tool {
   code: (base: string, model: string, all: string[]) => string;
 }
 
-const TOOLS: Tool[] = [
+/** The supported CLI integrations and their native config snippets.
+ * Shapes mapped 1:1 from OmniRoute's CLI tool catalog (setup-codex /
+ * setup-opencode / setup-cursor / Hermes Agent config at $HERMES_HOME). */
+export const CLI_TOOLS: CliTool[] = [
   {
-    name: "Claude Code",
-    desc: "env vars — no config file needed",
-    icon: Bot,
-    lang: "bash",
-    code: (b, m, all) => {
-      const small = all[1] ? `export ANTHROPIC_SMALL_FAST_MODEL=${all[1]}\n` : "";
-      return `export ANTHROPIC_BASE_URL=${b}
-export ANTHROPIC_AUTH_TOKEN=sk-troy
-export ANTHROPIC_MODEL=${m}
-${small}claude`;
-    },
+    name: "Hermes",
+    desc: "~/.hermes/config.yaml — OpenAI-compatible endpoint",
+    icon: Sparkles,
+    lang: "yaml",
+    code: (b, m) => `model:
+  default: "${m}"
+  provider: "custom"
+  base_url: "${b}/v1"
+  api_key: "sk-troy"`,
+  },
+  {
+    name: "Codex CLI",
+    desc: "~/.codex/config.toml — uses the responses API",
+    icon: Box,
+    lang: "toml",
+    code: (b, m) => `model_provider = "troy"
+model = "${m}"
+
+[model_providers.troy]
+name = "Troy"
+base_url = "${b}/v1"
+wire_api = "responses"`,
+  },
+  {
+    name: "Cursor",
+    desc: "in-app steps — Cursor's config is opaque, so no file is written",
+    icon: MousePointer2,
+    lang: "text",
+    code: (b, m) => `Settings → Models → Advanced (or Model → OpenAI API Key)
+
+OpenAI API Base URL: ${b}/v1
+OpenAI API Key:      sk-troy
+Model:               ${m}`,
   },
   {
     name: "OpenCode",
@@ -38,6 +65,7 @@ ${small}claude`;
       const entries = (all.length ? all : [m]).map((s) => `        "${s}": { "name": "${s}" }`).join(",\n");
       return `{
   "$schema": "https://opencode.ai/config.json",
+  "model": "troy/${m}",
   "provider": {
     "troy": {
       "npm": "@ai-sdk/openai-compatible",
@@ -54,100 +82,19 @@ ${entries}
 }`;
     },
   },
-  {
-    name: "Cursor",
-    desc: "settings → OpenAI-compatible",
-    icon: MousePointer2,
-    lang: "json",
-    code: (b, m) => `{
-  "openai": {
-    "baseUrl": "${b}/v1",
-    "apiKey": "sk-troy",
-    "model": "${m}"
-  }
-}`,
-  },
-  {
-    name: "Codex CLI",
-    desc: "~/.codex/config.toml — uses the responses API",
-    icon: Box,
-    lang: "toml",
-    code: (b, m) => `model_provider = "troy"
-model = "${m}"
-
-[model_providers.troy]
-name = "Troy"
-base_url = "${b}/v1"
-wire_api = "responses"`,
-  },
-  {
-    name: "Gemini CLI",
-    desc: "env vars — routes through /v1",
-    icon: Sparkles,
-    lang: "bash",
-    code: (b, m) => `export ANTHROPIC_BASE_URL=${b}
-export ANTHROPIC_AUTH_TOKEN=sk-troy
-export ANTHROPIC_MODEL=${m}
-export GEMINI_API_KEY=sk-troy
-gemini`,
-  },
-  {
-    name: "Aider",
-    desc: "point at the OpenAI-compatible endpoint",
-    icon: Hammer,
-    lang: "bash",
-    code: (b, m, all) => {
-      const aliases = all.map((s) => ` --alias ${s.slice(s.indexOf("/") + 1)}:${s}`).join("");
-      return `aider --openai-api-base ${b}/v1 --openai-api-key sk-troy --model ${m}${aliases}`;
-    },
-  },
-  {
-    name: "Continue",
-    desc: "~/.continue/config.json",
-    icon: TextCursorInput,
-    lang: "json",
-    code: (b, m, all) => {
-      const list = (all.length ? all : [m])
-        .map(
-          (s) => `    {
-      "title": "${s}",
-      "provider": "openai",
-      "model": "${s}",
-      "apiBase": "${b}/v1",
-      "apiKey": "sk-troy"
-    }`
-        )
-        .join(",\n");
-      return `{
-  "models": [
-${list}
-  ]
-}`;
-    },
-  },
-  {
-    name: "Roo Code",
-    desc: "VS Code settings.json",
-    icon: Code2,
-    lang: "json",
-    code: (b, m) => `{
-  "roo-cline.provider": "openai",
-  "roo-cline.openAiBaseUrl": "${b}/v1",
-  "roo-cline.openAiApiKey": "sk-troy",
-  "roo-cline.model": "${m}"
-}`,
-  },
 ];
 
 export function ToolsPage() {
   const base = location.origin;
+  const [selectedModel, setSelectedModel] = useState("");
   const logs = useApi<LogRow[]>("/api/logs?limit=100");
   const saved = useApi<SavedModel[]>("/api/models");
   const chosen = [...(saved.data ?? [])]
     .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
     .map((m) => m.spec);
   const lastUsed = (logs.data ?? []).find((l) => l.status === "200 OK");
-  const model = chosen[0] ?? (lastUsed ? `${lastUsed.provider}/${lastUsed.model}` : "openai/gpt-4o");
+  const fallbackModel = chosen[0] ?? (lastUsed ? `${lastUsed.provider}/${lastUsed.model}` : "openai/gpt-4o");
+  const model = selectedModel && (chosen.length === 0 || chosen.includes(selectedModel)) ? selectedModel : fallbackModel;
   return (
     <div className="space-y-5">
       <Card>
@@ -159,7 +106,7 @@ export function ToolsPage() {
             </Badge>
           </div>
           <CardDescription>
-            troy speaks OpenAI-compatible API + Anthropic /v1/messages — point any CLI at it. No key needed:
+            troy speaks OpenAI-compatible API — point Hermes, Codex CLI, Cursor, or OpenCode at it. No key needed:
             troy uses your stored connection keys. The `sk-troy` in the snippets is a placeholder.
           </CardDescription>
           {chosen.length > 0 ? (
@@ -172,9 +119,24 @@ export function ToolsPage() {
               ))}
             </div>
           ) : null}
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <span className="text-[11px] text-muted-foreground">primary model for snippets:</span>
+            <Select value={model} onValueChange={setSelectedModel}>
+              <SelectTrigger size="sm" className="h-7 font-mono text-[11px]" aria-label="primary model for CLI snippets">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {(chosen.length > 0 ? chosen : [fallbackModel]).map((spec) => (
+                  <SelectItem key={spec} value={spec} className="font-mono text-xs">
+                    {spec}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           <p className="text-[11px] text-muted-foreground">
             {chosen.length > 0
-              ? `open code + continue list every chosen model; aider gets an alias per model; claude code gets main + fast model; cursor, codex, gemini, roo take one model — ${model}.`
+              ? `OpenCode lists every chosen model; Hermes, Codex, and Cursor take one model — ${model}.`
               : lastUsed
                 ? `no chosen models yet — snippets use your last-used model ${model}. Pick models in the providers page and they appear here automatically.`
                 : `no chosen models or usage yet — snippets use ${model} until you pick models in the providers page.`}
@@ -183,7 +145,7 @@ export function ToolsPage() {
       </Card>
 
       <div className="grid gap-4 md:grid-cols-2">
-        {TOOLS.map((t) => {
+        {CLI_TOOLS.map((t) => {
           const code = t.code(base, model, chosen);
           return (
             <Card key={t.name}>

@@ -226,9 +226,10 @@ function ProviderDetail({ id, onBack }: { id: string; onBack: () => void }) {
             <CopyButton what="endpoint" text={p?.baseUrl ?? ""} label="copy endpoint" />
           </div>
           <p className="mt-2 text-[11px] text-muted-foreground">
-            chat-completions endpoint — point opencode, cursor, cline or any OpenAI-compatible CLI
-            at <code className="font-mono">{location.origin}/v1</code> and use{" "}
-            <code className="font-mono">{id}/…</code> as the model.
+            OpenAI-compatible endpoint — Hermes and OpenCode use{" "}
+            <code className="font-mono">{location.origin}/v1</code>, Codex uses the responses API, and
+            Cursor points at the OpenAI base URL in-app. See the CLI tools
+            page for ready-to-copy configs and use <code className="font-mono">{id}/…</code> as the model.
           </p>
         </CardContent>
       </Card>
