@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
-import { Sidebar } from "./sidebar";
-import type { PageId } from "./sidebar";
-import { Topbar } from "./topbar";
-import { UsagePage } from "./pages/usage";
-import { ProvidersPage } from "./pages/providers";
-import { CombosPage } from "./pages/combos";
-import { ToolsPage } from "./pages/tools";
-import { SettingsPage } from "./pages/settings";
 import { initDark } from "../dark";
+import { CombosPage } from "./pages/combos";
+import { ProvidersPage } from "./pages/providers";
+import { SettingsPage } from "./pages/settings";
+import { ToolsPage } from "./pages/tools";
+import { UsagePage } from "./pages/usage";
+import type { PageId } from "./sidebar";
+import { Sidebar } from "./sidebar";
+import { Topbar } from "./topbar";
 
 export default function App() {
   const [page, setPage] = useState<PageId>("usage");

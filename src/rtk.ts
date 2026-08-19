@@ -96,7 +96,10 @@ function grep(text: string): string {
     if (!isGrepLine(line)) continue;
     const first = line.indexOf(":");
     const file = line.slice(0, first);
-    const content = line.slice(first + 1).replace(/^\d+:/, "").trim();
+    const content = line
+      .slice(first + 1)
+      .replace(/^\d+:/, "")
+      .trim();
     if (!fileMap.has(file)) fileMap.set(file, []);
     const list = fileMap.get(file)!;
     if (list.length < GREP_PER_FILE_MAX) list.push(content);
@@ -157,7 +160,10 @@ function tree(text: string): string {
 }
 
 function find(text: string): string {
-  const lines = text.split("\n").map((l) => l.trim()).filter((l) => l !== "");
+  const lines = text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l !== "");
   const dirMap = new Map<string, string[]>();
   for (const line of lines) {
     const i = line.lastIndexOf("/");
@@ -184,8 +190,22 @@ function gitStatus(text: string): string {
   for (const line of lines) {
     const m = line.match(/^\s*(\?\?|M|A|D|R|C|U|MM| M|AM|\sM|!!)\s+(.+)$/);
     if (!m) continue;
-    const key = m[1] === "??" ? "untracked" : m[1].includes("M") ? "modified" : m[1] === "A" ? "added" : m[1] === "D" ? "deleted" : "changed";
-    (groups[key] ??= []).push(m[2]);
+    const key =
+      m[1] === "??"
+        ? "untracked"
+        : m[1].includes("M")
+          ? "modified"
+          : m[1] === "A"
+            ? "added"
+            : m[1] === "D"
+              ? "deleted"
+              : "changed";
+    let group = groups[key];
+    if (!group) {
+      group = [];
+      groups[key] = group;
+    }
+    group.push(m[2]);
   }
   const out: string[] = [];
   for (const [k, v] of Object.entries(groups)) out.push(`${k}: ${v.length}`, ...v.map((f) => `  ${f}`));
@@ -217,7 +237,7 @@ const RE_GIT_LOG = /^[*|/\\ ]*commit [0-9a-f]{7,40}$/m;
 const RE_PORCELAIN = /^[ MADRCU?!][ MADRCU?!] \S/m;
 const RE_LS_TOTAL = /^total \d+$/m;
 const RE_LS_ROW = /^[-dlbcps][rwx-]{9}/m;
-const RE_TREE_GLYPH = /[├└]──|│  /;
+const RE_TREE_GLYPH = /[├└]──|│ {2}/;
 
 function isPathLike(line: string) {
   if (line.includes(":")) return false;
@@ -232,8 +252,6 @@ function porcelainHitRatio(head: string): boolean {
   return hits / nonEmpty.length >= 0.6;
 }
 
-const FILTERS = { gitDiff, grep, ls, tree, find, gitStatus, gitLog, smartTruncate };
-
 function autoDetectFilter(text: string): ((t: string) => string) | null {
   const head = headWindow(text);
   if (RE_GIT_LOG.test(head)) return gitLog;
@@ -243,7 +261,10 @@ function autoDetectFilter(text: string): ((t: string) => string) | null {
   const fiveLines = head.split("\n").slice(0, 5);
   if (fiveLines.some(isGrepLine)) return grep;
   if (RE_TREE_GLYPH.test(head)) return tree;
-  const nonEmpty = head.split("\n").map((l) => l.trim()).filter((l) => l !== "");
+  const nonEmpty = head
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l !== "");
   if (nonEmpty.length >= 3 && nonEmpty.every(isPathLike)) return find;
   if (RE_LS_TOTAL.test(head)) return ls;
   const lsRows = head.split("\n").filter((l) => RE_LS_ROW.test(l));

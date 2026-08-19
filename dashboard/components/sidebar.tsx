@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
-import { Gauge, Layers, Network, Settings2, Terminal } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { Gauge, Layers, Network, Settings2, Terminal } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "../lib/utils";
 
 export const PAGES: { id: PageId; label: string; desc: string; icon: LucideIcon }[] = [
@@ -13,31 +13,25 @@ export const PAGES: { id: PageId; label: string; desc: string; icon: LucideIcon 
 
 export type PageId = "usage" | "providers" | "combos" | "tools" | "settings";
 
-export function Sidebar({
-  page,
-  onNavigate,
-}: {
-  page: PageId;
-  onNavigate: (p: PageId) => void;
-}) {
+export function Sidebar({ page, onNavigate }: { page: PageId; onNavigate: (p: PageId) => void }) {
   const navRef = useRef<HTMLElement | null>(null);
   const btnRefs = useRef<Partial<Record<PageId, HTMLButtonElement | null>>>({});
   const [ind, setInd] = useState<{ top: number; height: number } | null>(null);
 
-  const measure = () => {
+  const measure = useCallback(() => {
     const btn = btnRefs.current[page];
     if (!btn) return;
     setInd({ top: btn.offsetTop, height: btn.offsetHeight });
-  };
+  }, [page]);
 
-  useEffect(measure, [page]);
+  useEffect(measure, [measure]);
   useEffect(() => {
     const nav = navRef.current;
     if (!nav) return;
     const ro = new ResizeObserver(measure);
     ro.observe(nav);
     return () => ro.disconnect();
-  }, [page]);
+  }, [measure]);
 
   return (
     <aside className="flex w-64 shrink-0 flex-col border-r border-border bg-card">
@@ -47,27 +41,24 @@ export function Sidebar({
         </span>
         <span className="min-w-0">
           <span className="block text-[15px] leading-tight font-semibold tracking-tight">troy</span>
-          <span className="block text-[10px] tracking-[0.08em] text-muted-foreground uppercase">
-            minimal ai router
-          </span>
+          <span className="block text-[10px] tracking-[0.08em] text-muted-foreground uppercase">minimal ai router</span>
         </span>
       </div>
 
       <nav ref={navRef} className="relative flex-1 space-y-1 px-4 py-2">
-        <p className="px-4 pt-2 pb-2 text-[10px] tracking-[0.08em] text-muted-foreground uppercase">
-          router
-        </p>
+        <p className="px-4 pt-2 pb-2 text-[10px] tracking-[0.08em] text-muted-foreground uppercase">router</p>
         <span
           aria-hidden="true"
           className={cn(
             "pointer-events-none absolute inset-x-4 rounded-full bg-primary transition-[top] duration-[120ms] ease-out motion-reduce:transition-none",
-            ind ? "opacity-100" : "opacity-0"
+            ind ? "opacity-100" : "opacity-0",
           )}
           style={ind ? { top: ind.top, height: ind.height } : undefined}
         />
         {PAGES.map((p) => (
           <button
             key={p.id}
+            type="button"
             ref={(el) => {
               btnRefs.current[p.id] = el;
             }}
@@ -76,7 +67,7 @@ export function Sidebar({
               "relative flex w-full items-center gap-3 rounded-full px-4 py-2 text-[13px] font-medium transition-colors",
               page === p.id
                 ? "text-primary-foreground hover:text-primary-foreground"
-                : "text-muted-foreground hover:text-foreground"
+                : "text-muted-foreground hover:text-foreground",
             )}
           >
             <p.icon className="size-4" />
@@ -90,9 +81,7 @@ export function Sidebar({
           <span className="size-1.5 bg-aloe ring-1 ring-black/10 dark:ring-white/10" aria-hidden="true" />
           router online
         </p>
-        <p className="mt-1.5 truncate font-mono text-[11px] text-muted-foreground">
-          {location.origin}/v1
-        </p>
+        <p className="mt-1.5 truncate font-mono text-[11px] text-muted-foreground">{location.origin}/v1</p>
       </div>
     </aside>
   );

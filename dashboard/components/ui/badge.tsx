@@ -1,6 +1,6 @@
-import * as React from "react";
 import { Slot } from "@radix-ui/react-slot";
 import { cva, type VariantProps } from "class-variance-authority";
+import type * as React from "react";
 import { cn } from "../../lib/utils";
 
 const badgeVariants = cva(
@@ -8,8 +8,8 @@ const badgeVariants = cva(
   {
     variants: {
       variant: {
-        default: "border-transparent bg-aloe text-ink", /* pill-tag-mint */
-        secondary: "border-transparent bg-shade-30 text-foreground", /* pill-tag-shade */
+        default: "border-transparent bg-aloe text-ink" /* pill-tag-mint */,
+        secondary: "border-transparent bg-shade-30 text-foreground" /* pill-tag-shade */,
         destructive: "border-transparent bg-destructive text-white",
         outline: "border-border bg-white text-foreground dark:bg-card",
       },
@@ -17,7 +17,7 @@ const badgeVariants = cva(
     defaultVariants: {
       variant: "default",
     },
-  }
+  },
 );
 
 function Badge({

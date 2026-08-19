@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Store } from "../src/db";
 import { getProvider, inferProvider, PROVIDERS } from "../src/registry";
-import { CooldownStore, handleChat, type ChatDeps } from "../src/route";
+import { type ChatDeps, CooldownStore, handleChat } from "../src/route";
 
 let stubUrl = "";
 let lastReq: { url: string; headers: Record<string, string> } | null = null;

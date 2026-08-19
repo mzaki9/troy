@@ -1,33 +1,22 @@
 import { useEffect, useRef, useState } from "react";
+import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { cn } from "../../lib/utils";
+import type { DailyData, LogRow, StatRow, StatsData } from "../api";
+import { barHex, fmt, lastUsed, rateClass, short, useApi } from "../api";
+import { ProviderIcon, providerColor } from "../provider-icon";
 import { Badge } from "../ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
+import { type ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent } from "../ui/chart";
 import { Skeleton } from "../ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
-import { TopologyView } from "../topology-view";
-import { ProviderIcon } from "../provider-icon";
-import type { TopoData } from "../../topology";
-import {
-  barHex,
-  fmt,
-  lastUsed,
-  rateClass,
-  short,
-  useApi,
-} from "../api";
-import type { LogRow, StatsData, StatRow } from "../api";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 
 function EmptyState({ msg }: { msg: string }) {
   return <p className="py-10 text-center text-sm text-muted-foreground">{msg}</p>;
 }
 
 function ModelCode({ model }: { model: string }) {
-  return (
-    <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
-      {model}
-    </code>
-  );
+  return <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">{model}</code>;
 }
 
 // ---- stat cards ----
@@ -45,12 +34,8 @@ function StatCard({
 }) {
   return (
     <Card className="gap-1 px-5 py-4">
-      <p className="text-[11px] tracking-[0.08em] text-muted-foreground uppercase">
-        {label}
-      </p>
-      <p className={cn("truncate text-3xl font-light tracking-[0.02em] tabular-nums", valueClass)}>
-        {value}
-      </p>
+      <p className="text-[11px] tracking-[0.08em] text-muted-foreground uppercase">{label}</p>
+      <p className={cn("truncate text-3xl font-light tracking-[0.02em] tabular-nums", valueClass)}>{value}</p>
       {sub ? <p className="text-[10px] text-muted-foreground">{sub}</p> : null}
     </Card>
   );
@@ -88,10 +73,10 @@ function ProviderBars({ byProvider }: { byProvider: StatsData["byProvider"] }) {
               </span>
               <span className={cn("shrink-0 font-medium", rateClass(pct))}>{pct.toFixed(0)}%</span>
             </div>
-            <div className="h-2 overflow-hidden rounded-full" style={{ background: barHex(pct) + "26" }}>
+            <div className="h-2 overflow-hidden rounded-full" style={{ background: `${barHex(pct)}26` }}>
               <div
                 className="h-full rounded-full transition-all"
-                style={{ width: pct.toFixed(0) + "%", background: barHex(pct) }}
+                style={{ width: `${pct.toFixed(0)}%`, background: barHex(pct) }}
               />
             </div>
             <p className="text-[11px] text-muted-foreground">
@@ -100,6 +85,97 @@ function ProviderBars({ byProvider }: { byProvider: StatsData["byProvider"] }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// ---- daily stacked bar chart (7d, per model) ----
+
+/** "2026-08-13" → "Wed 13" using LOCAL date parts (Date(iso) would shift across tz). */
+function fmtDay(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-US", { weekday: "short", day: "numeric" });
+}
+
+function fmtDayFull(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+}
+
+/** Stacked request bars per day; segments + legend = model names (top N + "other"). */
+function DailyChart({ data }: { data?: DailyData }) {
+  if (!data) {
+    return (
+      <div className="flex h-[320px] items-end gap-1.5 px-1">
+        {Array.from({ length: 18 }).map((_, i) => (
+          <Skeleton key={i} className="flex-1 rounded-t-sm" style={{ height: `${20 + ((i * 37) % 80)}%` }} />
+        ))}
+      </div>
+    );
+  }
+
+  const totals = new Map<string, number>();
+  for (const d of data.days) {
+    for (const m of d.models) totals.set(m.model, (totals.get(m.model) ?? 0) + m.requests);
+  }
+  if (totals.size === 0) return <EmptyState msg="No traffic in the last 7 days — send a request on the proxy." />;
+
+  // top models by 7d volume, rest folded into "other" (reserve the name to avoid key collision)
+  const top = [...totals.entries()]
+    .filter(([m]) => m !== "other")
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 9)
+    .map(([m]) => m);
+  const otherN = totals.size > top.length;
+  const keys = otherN ? [...top, "other"] : top;
+  const rows = data.days.map((d) => {
+    const row: Record<string, string | number> = { day: fmtDay(d.day), __full: d.day };
+    for (const k of keys) row[k] = 0;
+    for (const m of d.models) {
+      const k = top.includes(m.model) ? m.model : "other";
+      row[k] = (row[k] as number) + m.requests;
+    }
+    return row;
+  });
+
+  const config: ChartConfig = {};
+  for (const m of top) config[m] = { label: m, color: providerColor(m) };
+  if (otherN) config.other = { label: "other", color: "#71717a" };
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 pb-3">
+        {keys.map((k) => (
+          <span
+            key={k}
+            className="flex max-w-[210px] items-center gap-1.5 text-[11px] text-muted-foreground"
+            title={config[k].label}
+          >
+            <span className="size-2 shrink-0 rounded-[2px]" style={{ backgroundColor: config[k].color }} />
+            <span className="truncate">{config[k].label}</span>
+          </span>
+        ))}
+      </div>
+      <ChartContainer config={config} className="h-[320px]">
+        <BarChart data={rows} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
+          <CartesianGrid vertical={false} strokeDasharray="3 3" />
+          <XAxis dataKey="day" tickLine={false} axisLine={false} tickMargin={10} />
+          <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={30} />
+          <ChartTooltip
+            cursor={{ fill: "hsl(var(--muted) / 0.35)" }}
+            content={<ChartTooltipContent labelKey="__full" labelFormatter={(v) => fmtDayFull(String(v ?? ""))} />}
+          />
+          {keys.map((k, i) => (
+            <Bar
+              key={k}
+              dataKey={k}
+              stackId="a"
+              fill={`var(--color-${k})`}
+              radius={i === keys.length - 1 ? [3, 3, 0, 0] : [0, 0, 0, 0]}
+            />
+          ))}
+        </BarChart>
+      </ChartContainer>
     </div>
   );
 }
@@ -139,7 +215,12 @@ function RequestsTable({ rows, limit }: { rows?: LogRow[]; limit: number }) {
             <TableCell>
               <ModelCode model={r.model} />
             </TableCell>
-            <TableCell className={cn("font-mono text-xs", r.status === "200 OK" ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")}>
+            <TableCell
+              className={cn(
+                "font-mono text-xs",
+                r.status === "200 OK" ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400",
+              )}
+            >
               {r.status}
             </TableCell>
             <TableCell className="text-right font-mono tabular-nums">{r.latency_ms}</TableCell>
@@ -210,20 +291,21 @@ function PeriodPills() {
         aria-hidden="true"
         className={cn(
           "pointer-events-none absolute rounded-full bg-primary transition-[left,width] duration-[120ms] ease-out motion-reduce:transition-none",
-          ind ? "opacity-100" : "opacity-0"
+          ind ? "opacity-100" : "opacity-0",
         )}
         style={ind ? { left: ind.left, top: 4, width: ind.width, height: "calc(100% - 8px)" } : undefined}
       />
       {pills.map((p) => (
         <button
           key={p}
+          type="button"
           ref={(el) => {
             btnRefs.current[p] = el;
           }}
           onClick={() => setPeriod(p)}
           className={cn(
             "relative rounded-full px-4 py-1.5 text-xs font-medium transition-colors",
-            period === p ? "text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+            period === p ? "text-primary-foreground" : "text-muted-foreground hover:text-foreground",
           )}
         >
           {p}
@@ -237,12 +319,11 @@ function PeriodPills() {
 
 export function UsagePage() {
   const stats = useApi<StatsData>("/api/stats", { interval: 3000 });
+  const daily = useApi<DailyData>("/api/stats/daily?days=7", { interval: 3000 });
   const logs = useApi<LogRow[]>("/api/logs", { interval: 3000 });
-  const topo = useApi<TopoData>("/api/topology?window=60", { interval: 2000 });
 
   const t = stats.data?.totals;
-  const rate = t && t.requests ? (t.ok / t.requests) * 100 : undefined;
-  const active = (topo.data?.activeCount ?? 0) > 0;
+  const rate = t?.requests ? (t.ok / t.requests) * 100 : undefined;
 
   return (
     <Tabs defaultValue="overview">
@@ -260,9 +341,9 @@ export function UsagePage() {
               <StatCard label="Total Requests" value={fmt.format(t.requests)} />
               <StatCard
                 label="Success rate"
-                value={t.requests ? rate!.toFixed(1) + "%" : "—"}
-                sub={rate! < 100 && t.requests ? (rate! >= 95 ? "" : "below 95%") : ""}
-                valueClass={t.requests ? rateClass(rate!) : ""}
+                value={rate !== undefined ? `${rate.toFixed(1)}%` : "—"}
+                sub={rate !== undefined && rate < 100 && t.requests ? (rate >= 95 ? "" : "below 95%") : ""}
+                valueClass={rate !== undefined ? rateClass(rate) : ""}
               />
               <StatCard
                 label="Failed"
@@ -276,31 +357,20 @@ export function UsagePage() {
         </div>
 
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-          <Card className="relative min-h-[380px]">
+          <Card className="min-h-[380px]">
             <CardHeader className="flex-row items-center justify-between">
-              <CardTitle>Topology</CardTitle>
-              <Badge variant={active ? "default" : "secondary"}>
-                {topo.data
-                  ? active
-                    ? `${topo.data.activeCount} active`
-                    : "idle"
-                  : "…"}
-              </Badge>
+              <CardTitle>Requests per day</CardTitle>
+              <Badge variant="secondary">last 7 days · stacked by model</Badge>
             </CardHeader>
-            <div className="absolute inset-x-0 bottom-0 top-14">
-              <TopologyView data={topo.data} />
-              <span className="pointer-events-none absolute right-3 bottom-2 text-[10px] text-muted-foreground/70">
-                drag to pan · scroll to zoom · dbl-click to fit
-              </span>
-            </div>
+            <CardContent>
+              <DailyChart data={daily.data} />
+            </CardContent>
           </Card>
 
           <Card>
             <CardHeader className="flex-row items-center justify-between">
               <CardTitle>Provider health</CardTitle>
-              <Badge variant="secondary">
-                {stats.data ? `${stats.data.byProvider.length} providers` : "—"}
-              </Badge>
+              <Badge variant="secondary">{stats.data ? `${stats.data.byProvider.length} providers` : "—"}</Badge>
             </CardHeader>
             <CardContent>
               {stats.data ? (

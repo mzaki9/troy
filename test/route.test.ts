@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Store } from "../src/db";
-import { CooldownStore, handleChat, type ChatDeps, type LogRow } from "../src/route";
 import { registerCustomProvider, unregisterCustomProvider } from "../src/registry";
+import { type ChatDeps, CooldownStore, handleChat, type LogRow } from "../src/route";
 
 interface StubBehavior {
   status: number;
@@ -10,7 +10,7 @@ interface StubBehavior {
 }
 
 let stubUrl = "";
-let behaviors = new Map<string, StubBehavior>();
+const behaviors = new Map<string, StubBehavior>();
 let lastPayload: unknown = null;
 
 const stub = Bun.serve({
@@ -91,6 +91,23 @@ describe("multi-account rotation", () => {
     const second = await handleChat({ model: "openai/gpt-4o", message: "hi" }, ctx.deps);
     expect(second.status).toBe(503);
   });
+
+  test("503 explains the upstream reason when an account is locked", async () => {
+    behaviors.set("rl", {
+      status: 429,
+      body: JSON.stringify({
+        error: { message: "Rate limit exceeded. Please try again later.", type: "FreeUsageLimitError" },
+      }),
+    });
+    const ctx = makeDeps();
+    addConn(ctx, "openai", "rl");
+    await handleChat({ model: "openai/gpt-4o", message: "hi" }, ctx.deps); // first attempt fails → locks account
+    const second = await handleChat({ model: "openai/gpt-4o", message: "hi" }, ctx.deps);
+    expect(second.status).toBe(503);
+    const body = await second.text();
+    expect(body).toContain("Rate limit exceeded");
+    expect(body).toContain("FreeUsageLimitError");
+  });
 });
 
 describe("combo fallback", () => {
@@ -135,7 +152,7 @@ describe("errors", () => {
 
 describe("streaming passthrough", () => {
   test("SSE body passes through byte-identical", async () => {
-    const sse = "data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\"}\n\ndata: [DONE]\n\n";
+    const sse = 'data: {"id":"1","object":"chat.completion.chunk"}\n\ndata: [DONE]\n\n';
     behaviors.set("sse", { status: 200, headers: { "content-type": "text/event-stream" }, body: sse });
     const ctx = makeDeps();
     addConn(ctx, "openai", "sse");
@@ -158,11 +175,16 @@ describe("rtk + inject", () => {
     await handleChat(
       {
         model: "openai/gpt-4o",
-        messages: [{ role: "user", content: "look" }, { role: "tool", tool_call_id: "1", content: toolContent }],
+        messages: [
+          { role: "user", content: "look" },
+          { role: "tool", tool_call_id: "1", content: toolContent },
+        ],
       },
-      ctx.deps
+      ctx.deps,
     );
-    const forwarded = (lastPayload as { messages: { role: string; content: string }[] }).messages.find((m) => m.role === "tool");
+    const forwarded = (lastPayload as { messages: { role: string; content: string }[] }).messages.find(
+      (m) => m.role === "tool",
+    );
     expect(forwarded!.content.length).toBeLessThan(toolContent.length);
   });
 
@@ -174,9 +196,11 @@ describe("rtk + inject", () => {
     await handleChat(
       {
         model: "openai/gpt-4o",
-        messages: [{ role: "assistant", content: [{ type: "tool_result", tool_use_id: "1", is_error: true, text: big }] }],
+        messages: [
+          { role: "assistant", content: [{ type: "tool_result", tool_use_id: "1", is_error: true, text: big }] },
+        ],
       },
-      ctx.deps
+      ctx.deps,
     );
     const forwarded = (lastPayload as { messages: { content: { type: string; text: string }[] }[] }).messages[0];
     expect((forwarded.content as { text: string }[])[0].text).toBe(big);
@@ -216,7 +240,13 @@ describe("opencode free gate", () => {
   test("keyless provider works with no stored connection", async () => {
     behaviors.set("", { status: 200, body: JSON.stringify({ ok: true }) });
     const ctx = makeDeps();
-    registerCustomProvider({ id: "keyless-test", aliases: ["keyless-test"], name: "Keyless", baseUrl: stubUrl, auth: "none" });
+    registerCustomProvider({
+      id: "keyless-test",
+      aliases: ["keyless-test"],
+      name: "Keyless",
+      baseUrl: stubUrl,
+      auth: "none",
+    });
     try {
       const res = await handleChat({ model: "keyless-test/mimo", messages: [] }, ctx.deps);
       expect(res.status).toBe(200);
@@ -276,5 +306,38 @@ describe("reasoning effort (thinking mode)", () => {
     const p = lastPayload as { model: string; reasoning_effort?: string };
     expect(p.model).toBe("o3-mini");
     expect(p.reasoning_effort).toBe("high");
+  });
+});
+
+describe("statsDaily (7d chart feed)", () => {
+  test("buckets requests per local day + model, zero-filled window", () => {
+    const { store } = makeDeps();
+    const now = new Date();
+    // local noon — safe from tz day-boundary shifts
+    const at = (daysAgo: number) => {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysAgo, 12, 0, 0);
+      return d.toISOString();
+    };
+    const ins = store.raw.query(
+      "INSERT INTO usage_history (ts, provider, model, combo, status, latency_ms, tokens) VALUES (?, ?, ?, NULL, '200 OK', 0, '{}')",
+    );
+    const log = (daysAgo: number, model: string) => ins.run(at(daysAgo), "openai", model);
+    log(0, "gpt-4o");
+    log(0, "gpt-4o");
+    log(0, "deepseek-chat");
+    log(1, "gpt-4o");
+    log(6, "llama-3.3");
+    log(9, "gpt-4o"); // outside the 7d window — must be excluded
+
+    const res = store.statsDaily(7);
+    expect(res.days).toHaveLength(7);
+    expect(res.days[0].day).toBe(at(6).slice(0, 10)); // window starts 6 days ago
+    expect(res.days[6].day).toBe(at(0).slice(0, 10)); // ends today
+    const counts = (d: (typeof res.days)[number]) => Object.fromEntries(d.models.map((m) => [m.model, m.requests]));
+    expect(counts(res.days[6])).toEqual({ "gpt-4o": 2, "deepseek-chat": 1 });
+    expect(counts(res.days[5])).toEqual({ "gpt-4o": 1 });
+    expect(counts(res.days[0])).toEqual({ "llama-3.3": 1 });
+    const total = res.days.reduce((s, d) => s + d.models.reduce((x, m) => x + m.requests, 0), 0);
+    expect(total).toBe(5);
   });
 });

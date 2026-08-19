@@ -58,14 +58,12 @@ const PONY_SHARED = [
 ].join(" ");
 
 const PONYTAIL_LEVELS: Record<string, string> = {
-  lite: "The ladder enforced lightly: Stdlib and native first. Shortest working diff. ${PONY_SHARED}",
-  full: "Full: the ladder enforced. Stdlib and native first. Shortest diff, shortest explanation. ${PONY_SHARED}",
-  ultra: "Ultra: strictest ladder. Question whether the task needs to exist at all (YAGNI). Stdlib and native first. One line before fifty. ${PONY_SHARED}",
+  lite: `The ladder enforced lightly: Stdlib and native first. Shortest working diff. ${PONY_SHARED}`,
+  full: `Full: the ladder enforced. Stdlib and native first. Shortest diff, shortest explanation. ${PONY_SHARED}`,
+  ultra: `Ultra: strictest ladder. Question whether the task needs to exist at all (YAGNI). Stdlib and native first. One line before fifty. ${PONY_SHARED}`,
 };
 
-const PONYTAIL_PROMPTS = Object.fromEntries(
-  Object.entries(PONYTAIL_LEVELS).map(([k, v]) => [k, v.replace("${PONY_SHARED}", PONY_SHARED)])
-);
+const PONYTAIL_PROMPTS = { ...PONYTAIL_LEVELS };
 
 const SEP = "\n\n";
 

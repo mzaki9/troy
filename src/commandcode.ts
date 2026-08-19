@@ -57,7 +57,8 @@ function argsObject(v: unknown): Obj {
 // ponytail: no shared isVisionModelId heuristic in troy — CC-specific patterns
 // + a short generic fallback. Add the shared helper if more providers need it.
 const CC_VISION_PATTERNS: RegExp[] = [/kimi-k2/i, /qwen3\.\d/i, /step-?3/i, /claude-fable/i, /gpt-5/i, /fugu/i];
-const GENERIC_VISION = /(^|[-\/])(gpt-4o|gpt-4\.1|o3|o4|claude-3|claude-4|gemini-[23]|minimax-m3|mistral-medium-3|vision|multimodal)/i;
+const GENERIC_VISION =
+  /(^|[-/])(gpt-4o|gpt-4\.1|o3|o4|claude-3|claude-4|gemini-[23]|minimax-m3|mistral-medium-3|vision|multimodal)/i;
 
 function isVisionModel(model: string): boolean {
   if (/(?:^|\/)mimo-v2\.5-pro$/i.test(model)) return false;
@@ -196,7 +197,12 @@ export function wrapCommandCode(body: Obj): { body: Obj; toolMap: Map<string, st
     messages,
     tools: asObjArray(body.tools).map((t) => {
       const fn = isObj(t.function) ? t.function : t;
-      return { type: "function", name: wire(str(fn.name)), description: str(fn.description), input_schema: isObj(fn.parameters) ? fn.parameters : {} };
+      return {
+        type: "function",
+        name: wire(str(fn.name)),
+        description: str(fn.description),
+        input_schema: isObj(fn.parameters) ? fn.parameters : {},
+      };
     }),
     system: [system.join("\n\n"), explicitSystem].filter(Boolean).join("\n\n"),
     stream: true,
@@ -206,7 +212,8 @@ export function wrapCommandCode(body: Obj): { body: Obj; toolMap: Map<string, st
     if (v !== undefined && v !== null) params[f] = v;
   }
   const maxT = body.max_tokens ?? body.max_completion_tokens;
-  if (typeof maxT === "number" && Number.isFinite(maxT) && maxT > 0) params.max_tokens = Math.min(Math.floor(maxT), MAX_TOKENS);
+  if (typeof maxT === "number" && Number.isFinite(maxT) && maxT > 0)
+    params.max_tokens = Math.min(Math.floor(maxT), MAX_TOKENS);
 
   return {
     toolMap,
@@ -300,12 +307,33 @@ function firstNumber(u: Obj, keys: string[]): number | undefined {
 function usageOf(state: CcState): Obj | undefined {
   const usage = state.usage;
   if (!usage) return undefined;
-  const inputDetails = firstRecord(usage, ["inputTokenDetails", "input_token_details", "input_tokens_details", "prompt_tokens_details"]);
-  const outputDetails = firstRecord(usage, ["outputTokenDetails", "output_token_details", "output_tokens_details", "completion_tokens_details"]);
-  const reasoningDetails = firstRecord(usage, ["reasoningTokenDetails", "reasoning_token_details", "reasoning_tokens_details"]);
+  const inputDetails = firstRecord(usage, [
+    "inputTokenDetails",
+    "input_token_details",
+    "input_tokens_details",
+    "prompt_tokens_details",
+  ]);
+  const outputDetails = firstRecord(usage, [
+    "outputTokenDetails",
+    "output_token_details",
+    "output_tokens_details",
+    "completion_tokens_details",
+  ]);
+  const reasoningDetails = firstRecord(usage, [
+    "reasoningTokenDetails",
+    "reasoning_token_details",
+    "reasoning_tokens_details",
+  ]);
   const cacheRead =
-    firstNumber(usage, ["cachedInputTokens", "cached_input_tokens", "cacheReadInputTokens", "cache_read_input_tokens", "cacheReadTokens", "cache_read_tokens", "cached_tokens"]) ??
-    firstNumber(inputDetails, ["cachedTokens", "cached_tokens", "cacheReadTokens", "cache_read_tokens"]);
+    firstNumber(usage, [
+      "cachedInputTokens",
+      "cached_input_tokens",
+      "cacheReadInputTokens",
+      "cache_read_input_tokens",
+      "cacheReadTokens",
+      "cache_read_tokens",
+      "cached_tokens",
+    ]) ?? firstNumber(inputDetails, ["cachedTokens", "cached_tokens", "cacheReadTokens", "cache_read_tokens"]);
   const noCache = firstNumber(inputDetails, ["noCacheTokens", "no_cache_tokens"]);
   // CC's inputTokens is the full prompt total and already includes the cached
   // portion — do NOT add cacheRead back (would double-count).
@@ -334,7 +362,7 @@ function usageOf(state: CcState): Obj | undefined {
   return out;
 }
 
-const chatId = () => "chatcmpl-" + crypto.randomUUID();
+const chatId = () => `chatcmpl-${crypto.randomUUID()}`;
 
 function chunk(id: string, model: string, delta: Obj, finish: unknown = null): string {
   return `data: ${JSON.stringify({ id, object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
@@ -344,7 +372,18 @@ function mergeUsage(state: CcState, ev: CcEvent): void {
   const usage = ev.type === "finish-step" ? (ev.usage ?? ev.totalUsage) : (ev.totalUsage ?? ev.usage);
   if (!isObj(usage)) return;
   const merged: Obj = { ...(state.usage ?? {}), ...usage };
-  for (const key of ["inputTokenDetails", "input_token_details", "input_tokens_details", "prompt_tokens_details", "outputTokenDetails", "output_token_details", "output_tokens_details", "completion_tokens_details", "reasoningTokenDetails", "reasoning_token_details"]) {
+  for (const key of [
+    "inputTokenDetails",
+    "input_token_details",
+    "input_tokens_details",
+    "prompt_tokens_details",
+    "outputTokenDetails",
+    "output_token_details",
+    "output_tokens_details",
+    "completion_tokens_details",
+    "reasoningTokenDetails",
+    "reasoning_token_details",
+  ]) {
     const before = isObj(state.usage?.[key]) ? state.usage[key] : {};
     const after = isObj(usage[key]) ? usage[key] : {};
     if (Object.keys(before).length > 0 || Object.keys(after).length > 0) merged[key] = { ...before, ...after };
@@ -368,7 +407,13 @@ function throwError(ev: CcEvent): never {
 }
 
 /** alpha/generate reply (always SSE upstream) → chat completions JSON or SSE. */
-export async function commandCodeReply(upstream: Response, stream: boolean, model: string, toolMap: Map<string, string>, signal?: AbortSignal): Promise<Response> {
+export async function commandCodeReply(
+  upstream: Response,
+  stream: boolean,
+  model: string,
+  toolMap: Map<string, string>,
+  signal?: AbortSignal,
+): Promise<Response> {
   const reader = upstream.body?.getReader();
   if (!reader) return errorResponse(new Error("Command Code response missing body"));
 
@@ -394,10 +439,15 @@ export async function commandCodeReply(upstream: Response, stream: boolean, mode
   };
 
   function errorResponse(err: unknown): Response {
-    return new Response(JSON.stringify({ error: { message: err instanceof Error ? err.message : String(err), type: "server_error", code: "bad_gateway" } }), {
-      status: 502,
-      headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
-    });
+    return new Response(
+      JSON.stringify({
+        error: { message: err instanceof Error ? err.message : String(err), type: "server_error", code: "bad_gateway" },
+      }),
+      {
+        status: 502,
+        headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
+      },
+    );
   }
 
   // non-stream client: aggregate everything into one chat completion
@@ -427,10 +477,19 @@ export async function commandCodeReply(upstream: Response, stream: boolean, mode
     const message: Obj = { role: "assistant", content: state.content };
     if (state.reasoning) message.reasoning_content = state.reasoning;
     if (state.toolCalls.length > 0) message.tool_calls = state.toolCalls;
-    const payload: Obj = { id, object: "chat.completion", created: Math.floor(Date.now() / 1000), model, choices: [{ index: 0, message, finish_reason: state.finishReason }] };
+    const payload: Obj = {
+      id,
+      object: "chat.completion",
+      created: Math.floor(Date.now() / 1000),
+      model,
+      choices: [{ index: 0, message, finish_reason: state.finishReason }],
+    };
     const usage = usageOf(state);
     if (usage) payload.usage = usage;
-    return new Response(JSON.stringify(payload), { status: 200, headers: { "content-type": "application/json", "access-control-allow-origin": "*" } });
+    return new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
+    });
   }
 
   // streaming client: alpha/generate events → chat completion chunks

@@ -1,8 +1,8 @@
-import { useState } from "react";
 import { Check, Copy, Moon, Sun } from "lucide-react";
-import { Button } from "./ui/button";
-import { PAGES, type PageId } from "./sidebar";
+import { useState } from "react";
 import { toggleDark, useDark } from "../dark";
+import { PAGES, type PageId } from "./sidebar";
+import { Button } from "./ui/button";
 
 export function Topbar({ page }: { page: PageId }) {
   const meta = PAGES.find((p) => p.id === page)!;
@@ -10,7 +10,7 @@ export function Topbar({ page }: { page: PageId }) {
   const dark = useDark();
 
   const copy = async () => {
-    await navigator.clipboard.writeText(location.origin + "/v1").catch(() => {});
+    await navigator.clipboard.writeText(`${location.origin}/v1`).catch(() => {});
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };

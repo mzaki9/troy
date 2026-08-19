@@ -6,6 +6,7 @@
     "dev": "bun build dashboard/app.tsx --outdir dashboard/dist --minify --watch & tailwindcss -i dashboard/styles.css -o dashboard/dist/styles.css --minify & bun --watch src/server.ts",
     "start": "bun --smol src/server.ts",
     "build": "NODE_ENV=production bun build dashboard/app.tsx --outdir dashboard/dist --minify && tailwindcss -i dashboard/styles.css -o dashboard/dist/styles.css --minify",
+    "lint": "biome check src dashboard test",
     "test": "bun test"
   },
   "dependencies": {
@@ -22,9 +23,11 @@
     "lucide-react": "^1.31.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "recharts": "^3.10.1",
     "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.9",
     "@tailwindcss/cli": "^4.3.3",
     "@types/bun": "^1.1.0",
     "@types/react": "^19.2.18",

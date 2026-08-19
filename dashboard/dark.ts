@@ -9,7 +9,9 @@ const subs = new Set<(v: boolean) => void>();
 function apply(v: boolean) {
   dark = v;
   document.documentElement.classList.toggle("dark", v);
-  subs.forEach((f) => f(v));
+  subs.forEach((f) => {
+    f(v);
+  });
 }
 
 export function initDark() {

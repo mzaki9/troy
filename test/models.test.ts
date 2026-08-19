@@ -1,19 +1,36 @@
 import { describe, expect, test } from "bun:test";
 import { Store } from "../src/db";
-import { isReasoningModel, resolveEffortAlias, EFFORT_ALIASES } from "../src/reasoning";
+import { EFFORT_ALIASES, isReasoningModel, resolveEffortAlias } from "../src/reasoning";
 
 describe("isReasoningModel", () => {
   test("known reasoning families", () => {
     for (const m of [
-      "o1", "o1-mini", "o3-mini", "o4-mini",
-      "gpt-5", "gpt-5.2", "gpt-5-mini",
-      "deepseek-reasoner", "deepseek-r1", "deepseek-r1-0528", "deepseek-v3", "deepseek-v4-flash",
-      "gemini-2.5-pro", "gemini-3-pro-preview",
-      "claude-sonnet-4.5", "claude-opus-4-6",
-      "glm-4.6", "glm-5.1",
-      "kimi-k2-thinking", "kimi-k2-0905-preview",
-      "minimax-m2", "ernie-4.5-8k", "nemotron-3-ultra",
-      "qwen3-thinking", "qwen3-reasoner", "grok-4-fast-reasoning",
+      "o1",
+      "o1-mini",
+      "o3-mini",
+      "o4-mini",
+      "gpt-5",
+      "gpt-5.2",
+      "gpt-5-mini",
+      "deepseek-reasoner",
+      "deepseek-r1",
+      "deepseek-r1-0528",
+      "deepseek-v3",
+      "deepseek-v4-flash",
+      "gemini-2.5-pro",
+      "gemini-3-pro-preview",
+      "claude-sonnet-4.5",
+      "claude-opus-4-6",
+      "glm-4.6",
+      "glm-5.1",
+      "kimi-k2-thinking",
+      "kimi-k2-0905-preview",
+      "minimax-m2",
+      "ernie-4.5-8k",
+      "nemotron-3-ultra",
+      "qwen3-thinking",
+      "qwen3-reasoner",
+      "grok-4-fast-reasoning",
     ]) {
       expect(isReasoningModel(m), m).toBe(true);
     }
@@ -21,10 +38,18 @@ describe("isReasoningModel", () => {
 
   test("non-reasoning models", () => {
     for (const m of [
-      "gpt-4o", "gpt-4o-mini", "gpt-4",
-      "claude-haiku-3.5", "claude-sonnet-3.5", "claude-3.5-sonnet",
-      "deepseek-chat", "gemini-1.5-pro", "gemini-2.0-flash",
-      "llama-3.3-70b", "qwen3-coder-plus", "mistral-large",
+      "gpt-4o",
+      "gpt-4o-mini",
+      "gpt-4",
+      "claude-haiku-3.5",
+      "claude-sonnet-3.5",
+      "claude-3.5-sonnet",
+      "deepseek-chat",
+      "gemini-1.5-pro",
+      "gemini-2.0-flash",
+      "llama-3.3-70b",
+      "qwen3-coder-plus",
+      "mistral-large",
     ]) {
       expect(isReasoningModel(m), m).toBe(false);
     }
@@ -34,7 +59,10 @@ describe("isReasoningModel", () => {
 describe("resolveEffortAlias", () => {
   test("strips effort alias from reasoning bases", () => {
     expect(resolveEffortAlias("o3-mini-high")).toEqual({ model: "o3-mini", effort: "high" });
-    expect(resolveEffortAlias("deepseek/deepseek-reasoner-low")).toEqual({ model: "deepseek/deepseek-reasoner", effort: "low" });
+    expect(resolveEffortAlias("deepseek/deepseek-reasoner-low")).toEqual({
+      model: "deepseek/deepseek-reasoner",
+      effort: "low",
+    });
     expect(resolveEffortAlias("gpt-5-medium")).toEqual({ model: "gpt-5", effort: "medium" });
   });
 

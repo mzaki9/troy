@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
 import { Check, Loader2 } from "lucide-react";
-import { api, useApi } from "../api";
+import { useEffect, useState } from "react";
 import type { Settings } from "../api";
+import { api, useApi } from "../api";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "../ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
@@ -54,8 +54,7 @@ export function SettingsPage() {
     if (d) setForm((prev) => prev ?? d);
   }, [settings.data]);
 
-  const dirty =
-    !!form && !!settings.data && JSON.stringify(form) !== JSON.stringify(settings.data);
+  const dirty = !!form && !!settings.data && JSON.stringify(form) !== JSON.stringify(settings.data);
 
   const save = async () => {
     if (!form) return;
@@ -126,11 +125,7 @@ export function SettingsPage() {
       </CardContent>
       <CardFooter className="justify-end border-t">
         <Button onClick={save} disabled={!dirty || saving}>
-          {saved ? (
-            <Check className="size-4" />
-          ) : saving ? (
-            <Loader2 className="size-4 animate-spin" />
-          ) : null}
+          {saved ? <Check className="size-4" /> : saving ? <Loader2 className="size-4 animate-spin" /> : null}
           {saved ? "saved" : "save settings"}
         </Button>
       </CardFooter>

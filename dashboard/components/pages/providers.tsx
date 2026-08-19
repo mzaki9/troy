@@ -1,12 +1,22 @@
-import { useEffect, useState } from "react";
-import type { FormEvent, ReactNode } from "react";
 import { ArrowLeft, Brain, Check, ChevronsUpDown, Eye, EyeOff, KeyRound, Plus, Trash2 } from "lucide-react";
+import type { FormEvent, ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "../../lib/utils";
-import { api, mask, useApi } from "../api";
 import type { Connection, ProviderCat, SavedModel } from "../api";
+import { api, mask, useApi } from "../api";
 import { CopyButton } from "../copy-button";
 import { ProviderIcon } from "../provider-icon";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "../ui/alert-dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "../ui/alert-dialog";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
@@ -39,10 +49,7 @@ function DeleteDialog({
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            className="bg-destructive text-white hover:bg-destructive/90"
-            onClick={onConfirm}
-          >
+          <AlertDialogAction className="bg-destructive text-white hover:bg-destructive/90" onClick={onConfirm}>
             Delete
           </AlertDialogAction>
         </AlertDialogFooter>
@@ -93,9 +100,7 @@ function Overview({ onOpen }: { onOpen: (id: string) => void }) {
             <CardTitle>Providers</CardTitle>
             <div className="flex items-center gap-2">
               <AddCustomDialog onAdded={providers.refetch} />
-              <Badge variant="secondary">
-                {providers.data ? `${providers.data.length} registered` : "…"}
-              </Badge>
+              <Badge variant="secondary">{providers.data ? `${providers.data.length} registered` : "…"}</Badge>
             </div>
           </div>
           <CardDescription>
@@ -119,7 +124,7 @@ function Overview({ onOpen }: { onOpen: (id: string) => void }) {
                   title={p.baseUrl}
                   className={cn(
                     "flex gap-3 rounded-lg border bg-card px-4 py-3 text-left transition-colors hover:border-black/40 dark:hover:border-white/40 focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/20 focus-visible:outline-none",
-                    p.connected && "border-aloe"
+                    p.connected && "border-aloe",
                   )}
                 >
                   <ProviderIcon id={p.id} className="size-8 rounded-lg" />
@@ -136,7 +141,7 @@ function Overview({ onOpen }: { onOpen: (id: string) => void }) {
                       <span
                         className={cn(
                           "size-1.5 rounded-full",
-                          p.connected ? "bg-emerald-500" : "bg-muted-foreground/60"
+                          p.connected ? "bg-emerald-500" : "bg-muted-foreground/60",
                         )}
                       />
                       {p.connected ? `${p.connected} connected` : "no key"}
@@ -213,9 +218,7 @@ function ProviderDetail({ id, onBack }: { id: string; onBack: () => void }) {
                     {p?.auth ?? "…"}
                   </Badge>
                 </CardTitle>
-                <CardDescription className="truncate">
-                  {p?.aliases?.join(" · ") ?? "…"}
-                </CardDescription>
+                <CardDescription className="truncate">{p?.aliases?.join(" · ") ?? "…"}</CardDescription>
               </div>
             </div>
             <Badge variant={conns.some((c) => c.is_active) ? "default" : "secondary"}>
@@ -232,11 +235,10 @@ function ProviderDetail({ id, onBack }: { id: string; onBack: () => void }) {
             <CopyButton what="endpoint" text={p?.baseUrl ?? ""} label="copy endpoint" />
           </div>
           <p className="mt-2 text-[11px] text-muted-foreground">
-            OpenAI-compatible endpoint — Hermes and OpenCode use{" "}
-            <code className="font-mono">{location.origin}/v1</code>, Codex uses the responses API, and
-            Cursor points at the OpenAI base URL in-app; Claude Code uses{" "}
-            <code className="font-mono">{location.origin}/v1/messages</code>. See the CLI tools
-            page for ready-to-copy configs and use <code className="font-mono">{id}/…</code> as the model.
+            OpenAI-compatible endpoint — Hermes and OpenCode use <code className="font-mono">{location.origin}/v1</code>
+            , Codex uses the responses API, and Cursor points at the OpenAI base URL in-app; Claude Code uses{" "}
+            <code className="font-mono">{location.origin}/v1/messages</code>. See the CLI tools page for ready-to-copy
+            configs and use <code className="font-mono">{id}/…</code> as the model.
           </p>
         </CardContent>
       </Card>
@@ -254,9 +256,7 @@ function ProviderDetail({ id, onBack }: { id: string; onBack: () => void }) {
               ))}
             </div>
           ) : conns.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">
-              No keys for {id} yet — paste one below.
-            </p>
+            <p className="py-8 text-center text-sm text-muted-foreground">No keys for {id} yet — paste one below.</p>
           ) : (
             <div className="divide-y divide-border/60">
               {conns.map((c) => {
@@ -272,9 +272,7 @@ function ProviderDetail({ id, onBack }: { id: string; onBack: () => void }) {
                       <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
                         #{c.priority}
                       </span>
-                      <code className="min-w-0 truncate font-mono text-xs">
-                        {show ? c.api_key : mask(c.api_key)}
-                      </code>
+                      <code className="min-w-0 truncate font-mono text-xs">{show ? c.api_key : mask(c.api_key)}</code>
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
                       <Button
@@ -297,7 +295,12 @@ function ProviderDetail({ id, onBack }: { id: string; onBack: () => void }) {
                         description="This connection will be removed and can no longer serve requests."
                         onConfirm={() => remove(c)}
                       >
-                        <Button variant="ghost" size="icon" aria-label={`remove ${id} key`} className="hover:text-destructive">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`remove ${id} key`}
+                          className="hover:text-destructive"
+                        >
                           <Trash2 className="size-4" />
                         </Button>
                       </DeleteDialog>
@@ -310,11 +313,7 @@ function ProviderDetail({ id, onBack }: { id: string; onBack: () => void }) {
         </CardContent>
 
         <div className="flex justify-end border-t px-8 pt-6">
-          <AddKeyDialog
-            providerId={id}
-            placeholderKeys={placeholderKeys}
-            onAdded={refetchAll}
-          />
+          <AddKeyDialog providerId={id} placeholderKeys={placeholderKeys} onAdded={refetchAll} />
         </div>
       </Card>
 
@@ -356,9 +355,9 @@ function ModelsCard({ providerId, refresh = 0 }: { providerId: string; refresh?:
     }
   };
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fetchModels is intentionally stable; `refresh` re-runs it
   useEffect(() => {
     fetchModels();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [providerId, refresh]);
 
   return (
@@ -397,11 +396,7 @@ function ModelsCard({ providerId, refresh = 0 }: { providerId: string; refresh?:
                 <ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" />
               </Button>
             </PopoverTrigger>
-            <PopoverContent
-              className="w-[min(380px,calc(100vw-2rem))] p-0"
-              align="start"
-              side="bottom"
-            >
+            <PopoverContent className="w-[min(380px,calc(100vw-2rem))] p-0" align="start" side="bottom">
               <Command>
                 <CommandInput placeholder="search models…" />
                 <CommandList>
@@ -432,7 +427,7 @@ function ModelsCard({ providerId, refresh = 0 }: { providerId: string; refresh?:
                         <Check
                           className={cn(
                             "size-4 shrink-0",
-                            chosen.has(`${providerId}/${m.id}`) ? "opacity-100" : "opacity-0"
+                            chosen.has(`${providerId}/${m.id}`) ? "opacity-100" : "opacity-0",
                           )}
                         />
                       </CommandItem>
@@ -633,13 +628,7 @@ function AddCustomDialog({ onAdded }: { onAdded: () => void }) {
         <form onSubmit={submit} className="space-y-3">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="cpId">id</Label>
-            <Input
-              id="cpId"
-              value={idv}
-              onChange={(e) => setIdv(e.target.value)}
-              placeholder="my-provider"
-              required
-            />
+            <Input id="cpId" value={idv} onChange={(e) => setIdv(e.target.value)} placeholder="my-provider" required />
             <p className="text-[11px] text-muted-foreground">
               1-32 chars, lowercase letters + dashes. Model prefix will be{" "}
               <code className="font-mono">{idv || "my-provider"}/…</code>
@@ -647,12 +636,7 @@ function AddCustomDialog({ onAdded }: { onAdded: () => void }) {
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="cpName">name (optional)</Label>
-            <Input
-              id="cpName"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="My Provider"
-            />
+            <Input id="cpName" value={name} onChange={(e) => setName(e.target.value)} placeholder="My Provider" />
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="cpUrl">base url</Label>

@@ -1,4 +1,4 @@
-import { handleChat, type ChatDeps } from "./route";
+import { type ChatDeps, handleChat } from "./route";
 
 /**
  * /v1/responses bridge (Codex CLI, Feb 2026+ removed `wire_api = "chat"`).
@@ -19,12 +19,22 @@ export function inputToMessages(input: unknown, instructions: unknown): Record<s
   }
   if (!Array.isArray(input)) return messages;
   for (const raw of input) {
-    const it = raw as { type?: string; role?: string; content?: unknown; call_id?: string; name?: string; arguments?: unknown; output?: unknown };
+    const it = raw as {
+      type?: string;
+      role?: string;
+      content?: unknown;
+      call_id?: string;
+      name?: string;
+      arguments?: unknown;
+      output?: unknown;
+    };
     if (it.type === "message") {
       const role = it.role === "assistant" ? "assistant" : "user";
       const content = Array.isArray(it.content)
         ? it.content.map((b: { type?: string; text?: string; image_url?: unknown }) =>
-            b.type === "input_image" || b.type === "image_url" ? { type: "image_url", image_url: b.image_url ?? {} } : { type: "text", text: typeof b.text === "string" ? b.text : "" }
+            b.type === "input_image" || b.type === "image_url"
+              ? { type: "image_url", image_url: b.image_url ?? {} }
+              : { type: "text", text: typeof b.text === "string" ? b.text : "" },
           )
         : (it.content ?? "");
       messages.push({ role, content });
@@ -32,7 +42,13 @@ export function inputToMessages(input: unknown, instructions: unknown): Record<s
       messages.push({
         role: "assistant",
         content: "",
-        tool_calls: [{ id: it.call_id ?? uuid(), type: "function", function: { name: it.name ?? "", arguments: String(it.arguments ?? "{}") } }],
+        tool_calls: [
+          {
+            id: it.call_id ?? uuid(),
+            type: "function",
+            function: { name: it.name ?? "", arguments: String(it.arguments ?? "{}") },
+          },
+        ],
       });
     } else if (it.type === "function_call_output") {
       messages.push({ role: "tool", tool_call_id: it.call_id ?? "", content: String(it.output ?? "") });
@@ -56,10 +72,12 @@ export function toChatBody(body: Record<string, unknown>): Record<string, unknow
   const reasoning = body.reasoning as { effort?: string } | undefined;
   if (reasoning?.effort) out.reasoning_effort = reasoning.effort;
   if (Array.isArray(body.tools)) {
-    out.tools = (body.tools as { type?: string; name?: string; description?: string; parameters?: unknown }[]).map((t) => ({
-      type: "function",
-      function: { name: t.name ?? "", description: t.description ?? "", parameters: t.parameters ?? {} },
-    }));
+    out.tools = (body.tools as { type?: string; name?: string; description?: string; parameters?: unknown }[]).map(
+      (t) => ({
+        type: "function",
+        function: { name: t.name ?? "", description: t.description ?? "", parameters: t.parameters ?? {} },
+      }),
+    );
   }
   return out;
 }
@@ -74,14 +92,27 @@ interface ChatUsage {
 
 /** chat completions response → responses response. */
 export function toResponses(res: unknown, model: string): Record<string, unknown> {
-  const r = res as { id?: string; choices?: { message?: { content?: unknown; tool_calls?: { id?: string; function?: { name?: string; arguments?: string } }[] } }[]; usage?: ChatUsage };
+  const r = res as {
+    id?: string;
+    choices?: {
+      message?: { content?: unknown; tool_calls?: { id?: string; function?: { name?: string; arguments?: string } }[] };
+    }[];
+    usage?: ChatUsage;
+  };
   const msg = r?.choices?.[0]?.message ?? {};
   const output: Record<string, unknown>[] = [];
   let text = "";
   if (typeof msg.content === "string") text = msg.content;
-  else if (Array.isArray(msg.content)) text = msg.content.map((b) => String((b as { text?: string }).text ?? "")).join("");
+  else if (Array.isArray(msg.content))
+    text = msg.content.map((b) => String((b as { text?: string }).text ?? "")).join("");
   if (text) {
-    output.push({ id: uuid(), type: "message", status: "completed", role: "assistant", content: [{ type: "output_text", text, annotations: [] }] });
+    output.push({
+      id: uuid(),
+      type: "message",
+      status: "completed",
+      role: "assistant",
+      content: [{ type: "output_text", text, annotations: [] }],
+    });
   }
   for (const tc of msg.tool_calls ?? []) {
     output.push({
@@ -95,7 +126,7 @@ export function toResponses(res: unknown, model: string): Record<string, unknown
   }
   const u = r?.usage;
   const out: Record<string, unknown> = {
-    id: "resp_" + uuid(),
+    id: `resp_${uuid()}`,
     object: "response",
     created_at: Math.floor(Date.now() / 1000),
     status: "completed",
@@ -141,8 +172,18 @@ function openMessage(st: StreamState, events: Record<string, unknown>[]) {
   if (st.open) closeOpen(st, events);
   st.open = { id: uuid(), type: "message", text: "", args: "" };
   events.push(
-    { type: "response.output_item.added", output_index: 0, item: { id: st.open.id, type: "message", role: "assistant", status: "in_progress", content: [] } },
-    { type: "response.content_part.added", item_id: st.open.id, output_index: 0, content_index: 0, part: { type: "output_text", text: "", annotations: [] } }
+    {
+      type: "response.output_item.added",
+      output_index: 0,
+      item: { id: st.open.id, type: "message", role: "assistant", status: "in_progress", content: [] },
+    },
+    {
+      type: "response.content_part.added",
+      item_id: st.open.id,
+      output_index: 0,
+      content_index: 0,
+      part: { type: "output_text", text: "", annotations: [] },
+    },
   );
 }
 
@@ -152,17 +193,57 @@ function closeOpen(st: StreamState, events: Record<string, unknown>[]) {
   if (o.type === "message") {
     events.push(
       { type: "response.output_text.done", item_id: o.id, output_index: 0, content_index: 0, text: o.text },
-      { type: "response.content_part.done", item_id: o.id, output_index: 0, content_index: 0, part: { type: "output_text", text: o.text, annotations: [] } },
-      { type: "response.output_item.done", output_index: 0, item: { id: o.id, type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: o.text, annotations: [] }] } }
+      {
+        type: "response.content_part.done",
+        item_id: o.id,
+        output_index: 0,
+        content_index: 0,
+        part: { type: "output_text", text: o.text, annotations: [] },
+      },
+      {
+        type: "response.output_item.done",
+        output_index: 0,
+        item: {
+          id: o.id,
+          type: "message",
+          role: "assistant",
+          status: "completed",
+          content: [{ type: "output_text", text: o.text, annotations: [] }],
+        },
+      },
     );
-    st.output.push({ id: o.id, type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: o.text, annotations: [] }] });
+    st.output.push({
+      id: o.id,
+      type: "message",
+      role: "assistant",
+      status: "completed",
+      content: [{ type: "output_text", text: o.text, annotations: [] }],
+    });
     st.outputText += o.text;
   } else {
     events.push(
       { type: "response.function_call_arguments.done", item_id: o.id, output_index: 0, arguments: o.args },
-      { type: "response.output_item.done", output_index: 0, item: { id: o.id, type: "function_call", status: "completed", call_id: o.callId, name: o.name, arguments: o.args } }
+      {
+        type: "response.output_item.done",
+        output_index: 0,
+        item: {
+          id: o.id,
+          type: "function_call",
+          status: "completed",
+          call_id: o.callId,
+          name: o.name,
+          arguments: o.args,
+        },
+      },
     );
-    st.output.push({ id: o.id, type: "function_call", status: "completed", call_id: o.callId, name: o.name, arguments: o.args });
+    st.output.push({
+      id: o.id,
+      type: "function_call",
+      status: "completed",
+      call_id: o.callId,
+      name: o.name,
+      arguments: o.args,
+    });
   }
   st.open = null;
 }
@@ -172,16 +253,38 @@ export function chatChunkToEvents(raw: unknown, st: StreamState): Record<string,
   const events: Record<string, unknown>[] = [];
   if (!st.started) {
     st.started = true;
-    const base = { id: st.id, object: "response", created_at: Math.floor(Date.now() / 1000), status: "in_progress", model: st.model, output: [] };
+    const base = {
+      id: st.id,
+      object: "response",
+      created_at: Math.floor(Date.now() / 1000),
+      status: "in_progress",
+      model: st.model,
+      output: [],
+    };
     events.push({ type: "response.created", response: base }, { type: "response.in_progress", response: base });
   }
-  const chunk = raw as { choices?: { delta?: { content?: string; tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[] }; finish_reason?: string | null }[]; usage?: ChatUsage };
+  const chunk = raw as {
+    choices?: {
+      delta?: {
+        content?: string;
+        tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[];
+      };
+      finish_reason?: string | null;
+    }[];
+    usage?: ChatUsage;
+  };
   const choice = chunk.choices?.[0];
   const delta = choice?.delta ?? {};
   if (typeof delta.content === "string" && delta.content) {
     openMessage(st, events);
     st.open!.text += delta.content;
-    events.push({ type: "response.output_text.delta", item_id: st.open!.id, output_index: 0, content_index: 0, delta: delta.content });
+    events.push({
+      type: "response.output_text.delta",
+      item_id: st.open!.id,
+      output_index: 0,
+      content_index: 0,
+      delta: delta.content,
+    });
   }
   for (const tc of delta.tool_calls ?? []) {
     if (tc.index == null) continue;
@@ -191,12 +294,21 @@ export function chatChunkToEvents(raw: unknown, st: StreamState): Record<string,
       const name = tc.function?.name ?? "";
       t = { id: uuid(), type: "function_call", text: "", args: "", callId: tc.id ?? uuid(), name };
       st.tools.set(tc.index, t);
-      events.push({ type: "response.output_item.added", output_index: tc.index, item: { id: t.id, type: "function_call", call_id: t.callId, name, arguments: "", status: "in_progress" } });
+      events.push({
+        type: "response.output_item.added",
+        output_index: tc.index,
+        item: { id: t.id, type: "function_call", call_id: t.callId, name, arguments: "", status: "in_progress" },
+      });
     }
     const argDelta = tc.function?.arguments;
     if (argDelta) {
       t.args += argDelta;
-      events.push({ type: "response.function_call_arguments.delta", item_id: t.id, output_index: tc.index, delta: argDelta });
+      events.push({
+        type: "response.function_call_arguments.delta",
+        item_id: t.id,
+        output_index: tc.index,
+        delta: argDelta,
+      });
     }
   }
   if (chunk.usage) st.usage = chunk.usage;
@@ -211,9 +323,27 @@ function finish(st: StreamState, events: Record<string, unknown>[]) {
   for (const t of st.tools.values()) {
     events.push(
       { type: "response.function_call_arguments.done", item_id: t.id, output_index: 0, arguments: t.args },
-      { type: "response.output_item.done", output_index: 0, item: { id: t.id, type: "function_call", status: "completed", call_id: t.callId, name: t.name, arguments: t.args } }
+      {
+        type: "response.output_item.done",
+        output_index: 0,
+        item: {
+          id: t.id,
+          type: "function_call",
+          status: "completed",
+          call_id: t.callId,
+          name: t.name,
+          arguments: t.args,
+        },
+      },
     );
-    st.output.push({ id: t.id, type: "function_call", status: "completed", call_id: t.callId, name: t.name, arguments: t.args });
+    st.output.push({
+      id: t.id,
+      type: "function_call",
+      status: "completed",
+      call_id: t.callId,
+      name: t.name,
+      arguments: t.args,
+    });
   }
   st.tools.clear();
   const u = st.usage;
@@ -254,15 +384,24 @@ export async function handleResponses(body: Record<string, unknown>, deps: ChatD
       return res;
     }
   }
-  const st: StreamState = { id: "resp_" + uuid(), model: String(chatBody.model), output: [], outputText: "", open: null, tools: new Map(), started: false, done: false, usage: null };
+  const st: StreamState = {
+    id: `resp_${uuid()}`,
+    model: String(chatBody.model),
+    output: [],
+    outputText: "",
+    open: null,
+    tools: new Map(),
+    started: false,
+    done: false,
+    usage: null,
+  };
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
   let buf = "";
   const stream = new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
       buf += decoder.decode(chunk, { stream: true });
-      let idx: number;
-      while ((idx = buf.indexOf("\n")) >= 0) {
+      for (let idx = buf.indexOf("\n"); idx >= 0; idx = buf.indexOf("\n")) {
         const line = buf.slice(0, idx).trim();
         buf = buf.slice(idx + 1);
         if (!line.startsWith("data:")) continue;

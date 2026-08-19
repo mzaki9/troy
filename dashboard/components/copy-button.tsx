@@ -1,5 +1,5 @@
-import { useState } from "react";
 import { Check, Copy } from "lucide-react";
+import { useState } from "react";
 import { Button } from "./ui/button";
 
 /** Copy text to clipboard with transient check feedback. `what` disambiguates multiple buttons on one page. */

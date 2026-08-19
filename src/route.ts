@@ -1,9 +1,9 @@
-import { getProvider, inferProvider, type Provider } from "./registry";
-import type { Store, Connection } from "./db";
-import { compressMessages } from "./rtk";
-import { injectCaveman, injectPonytail, type CavemanLevel, type PonytailLevel } from "./inject";
-import { isReasoningModel, resolveEffortAlias } from "./reasoning";
 import { commandCodeReply, wrapCommandCode } from "./commandcode";
+import type { Connection, Store } from "./db";
+import { type CavemanLevel, injectCaveman, injectPonytail, type PonytailLevel } from "./inject";
+import { isReasoningModel, resolveEffortAlias } from "./reasoning";
+import { getProvider, inferProvider, type Provider } from "./registry";
+import { compressMessages } from "./rtk";
 
 const BACKOFF_CONFIG = { base: 2000, max: 300000, maxLevel: 15 };
 const TRANSIENT_COOLDOWN_MS = 30000;
@@ -41,6 +41,13 @@ interface CooldownState {
 export class CooldownStore {
   private states = new Map<string, CooldownState>();
   private rr = new Map<string, { id: string; count: number }>();
+  /** last failure text per account key — surfaced in 503s so "unavailable" is diagnosable */
+  private reasons = new Map<string, string>();
+
+  /** The reason an account got locked, so the 503 can explain itself. */
+  lastFailReason(id: string, key: string): string | null {
+    return this.reasons.get(`${id}|${key}`) ?? this.reasons.get(`${id}|*`) ?? null;
+  }
 
   backoffLevel(id: string): number {
     return this.states.get(id)?.backoff ?? 0;
@@ -62,6 +69,8 @@ export class CooldownStore {
     s.until = now() + cooldownMs;
     s.backoff = newBackoffLevel;
     s.locks.set(key, now() + cooldownMs);
+    const reason = extractReason(errText);
+    if (reason) this.reasons.set(`${id}|${key}`, reason);
   }
 
   success(id: string, key: string) {
@@ -72,7 +81,10 @@ export class CooldownStore {
     for (const [k, v] of s.locks) {
       if (v <= now()) s.locks.delete(k);
     }
-    if (s.locks.size === 0) s.backoff = 0;
+    if (s.locks.size === 0) {
+      s.backoff = 0;
+      this.reasons.delete(`${id}|${key}`);
+    }
   }
 
   earliestRetryAfter(): number | null {
@@ -94,7 +106,12 @@ export class CooldownStore {
       st.count += 1;
       return eligible.find((c) => c.id === st.id)!;
     }
-    const idx = st ? Math.max(0, eligible.findIndex((c) => c.id === st.id)) : -1;
+    const idx = st
+      ? Math.max(
+          0,
+          eligible.findIndex((c) => c.id === st.id),
+        )
+      : -1;
     const next = eligible[(idx + 1) % eligible.length];
     this.rr.set(key, { id: next.id, count: 0 });
     return next;
@@ -125,7 +142,21 @@ function classify(status: number, errText: string, backoffLevel = 0): { cooldown
 }
 
 function getQuotaCooldown(level: number): number {
-  return Math.min(BACKOFF_CONFIG.base * Math.pow(2, Math.max(0, level - 1)), BACKOFF_CONFIG.max);
+  return Math.min(BACKOFF_CONFIG.base * 2 ** Math.max(0, level - 1), BACKOFF_CONFIG.max);
+}
+
+/** A short, human-safe failure excerpt for cooldown reasons (upstream error text can be huge). */
+function extractReason(errText: string): string | null {
+  const t = String(errText ?? "").trim();
+  if (!t || t === "{}") return null;
+  try {
+    const j = JSON.parse(t) as { error?: { message?: string; type?: string } };
+    const m = j?.error?.type && j?.error?.message ? `${j.error.type}: ${j.error.message}` : j?.error?.message;
+    if (m) return m;
+  } catch {
+    /* non-JSON — use raw text */
+  }
+  return t.length > 160 ? `${t.slice(0, 160)}…` : t;
 }
 
 export interface LogRow {
@@ -149,8 +180,14 @@ export interface ChatDeps {
 
 function openaiError(status: number, message: string): Response {
   return new Response(
-    JSON.stringify({ error: { message, type: status >= 500 ? "server_error" : "invalid_request_error", code: status >= 500 ? "bad_gateway" : "bad_request" } }),
-    { status, headers: { "content-type": "application/json", "access-control-allow-origin": "*" } }
+    JSON.stringify({
+      error: {
+        message,
+        type: status >= 500 ? "server_error" : "invalid_request_error",
+        code: status >= 500 ? "bad_gateway" : "bad_request",
+      },
+    }),
+    { status, headers: { "content-type": "application/json", "access-control-allow-origin": "*" } },
   );
 }
 
@@ -187,7 +224,12 @@ function passthrough(res: Response, stream: boolean): Response {
   return new Response(res.body, { status: res.status, headers });
 }
 
-async function forward(body: Record<string, unknown>, conn: Connection, def: Provider, signal?: AbortSignal): Promise<Response> {
+async function forward(
+  body: Record<string, unknown>,
+  conn: Connection,
+  def: Provider,
+  signal?: AbortSignal,
+): Promise<Response> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (def.auth === "bearer") headers.authorization = `Bearer ${conn.api_key}`;
   else if (def.auth === "raw") headers["x-api-key"] = conn.api_key;
@@ -249,17 +291,30 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
     if (def.auth === "none" && accounts.length === 0) {
       // keyless providers (opencode zen free tier) need no stored key — route without one
       accounts = [
-        { id: `${provider}-keyless`, provider, api_key: "", name: null, base_url: null, extra: "{}", priority: 0, is_active: 1, created_at: "" } as Connection,
+        {
+          id: `${provider}-keyless`,
+          provider,
+          api_key: "",
+          name: null,
+          base_url: null,
+          extra: "{}",
+          priority: 0,
+          is_active: 1,
+          created_at: "",
+        } as Connection,
       ];
     }
     const excluded = new Set<string>();
 
     while (true) {
-      const eligible = accounts.filter((c) => c.is_active === 1 && !excluded.has(c.id) && deps.cooldowns.isEligible(c.id, model));
+      const eligible = accounts.filter(
+        (c) => c.is_active === 1 && !excluded.has(c.id) && deps.cooldowns.isEligible(c.id, model),
+      );
       if (eligible.length === 0) {
         const locked = accounts.some((c) => deps.cooldowns.lockExpiry(c.id, model) > now());
         if (locked) {
-          lastError = `${provider}/${model} unavailable`;
+          const reason = accounts.map((c) => deps.cooldowns.lastFailReason(c.id, model)).find(Boolean) ?? null;
+          lastError = reason ? `${provider}/${model} unavailable — ${reason}` : `${provider}/${model} unavailable`;
           lastStatus = 503;
         } else {
           lastError = `No active credentials for provider: ${provider}`;
@@ -299,20 +354,26 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
       lastStatus = res.status;
       excluded.add(conn.id);
     }
-    continue;
   }
 
-  deps.onLog({ provider: "unknown", model: String(body.model), combo: combo?.name, status: `${lastStatus}`, latency_ms: now() - t0 });
+  deps.onLog({
+    provider: "unknown",
+    model: String(body.model),
+    combo: combo?.name,
+    status: `${lastStatus}`,
+    latency_ms: now() - t0,
+  });
   const retryAfter = deps.cooldowns.earliestRetryAfter();
   const headers: Record<string, string> = { "content-type": "application/json", "access-control-allow-origin": "*" };
-  if (retryAfter !== null && retryAfter > now()) headers["retry-after"] = String(Math.max(1, Math.ceil((retryAfter - now()) / 1000)));
+  if (retryAfter !== null && retryAfter > now())
+    headers["retry-after"] = String(Math.max(1, Math.ceil((retryAfter - now()) / 1000)));
   // command-code: surface the upstream error body/status verbatim (CC error
   // semantics survive — cooldown bookkeeping above still happens)
   if (lastRaw !== null && lastRaw.status >= 400) {
     return new Response(lastRaw.body, { status: lastRaw.status, headers });
   }
-  return new Response(
-    JSON.stringify({ error: { message: lastError, type: "server_error", code: "bad_gateway" } }),
-    { status: lastStatus, headers }
-  );
+  return new Response(JSON.stringify({ error: { message: lastError, type: "server_error", code: "bad_gateway" } }), {
+    status: lastStatus,
+    headers,
+  });
 }

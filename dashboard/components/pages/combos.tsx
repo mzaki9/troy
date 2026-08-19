@@ -1,9 +1,19 @@
-import { useState } from "react";
-import type { FormEvent, ReactNode } from "react";
 import { ArrowRight, Brain, ChevronsUpDown, Plus, Trash2, X } from "lucide-react";
-import { api, useApi } from "../api";
+import type { FormEvent, ReactNode } from "react";
+import { useState } from "react";
 import type { Combo, SavedModel } from "../api";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "../ui/alert-dialog";
+import { api, useApi } from "../api";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "../ui/alert-dialog";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "../ui/card";
@@ -28,16 +38,11 @@ function DeleteComboDialog({
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{`Delete combo "${name}"?`}</AlertDialogTitle>
-          <AlertDialogDescription>
-            Requests to this combo name will stop routing after deletion.
-          </AlertDialogDescription>
+          <AlertDialogDescription>Requests to this combo name will stop routing after deletion.</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            className="bg-destructive text-white hover:bg-destructive/90"
-            onClick={onConfirm}
-          >
+          <AlertDialogAction className="bg-destructive text-white hover:bg-destructive/90" onClick={onConfirm}>
             Delete
           </AlertDialogAction>
         </AlertDialogFooter>
@@ -118,7 +123,12 @@ export function CombosPage() {
                   </div>
                 </div>
                 <DeleteComboDialog name={c.name} onConfirm={() => remove(c)}>
-                  <Button variant="ghost" size="icon" aria-label={`delete ${c.name}`} className="hover:text-destructive">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`delete ${c.name}`}
+                    className="hover:text-destructive"
+                  >
                     <Trash2 className="size-4" />
                   </Button>
                 </DeleteComboDialog>
@@ -137,12 +147,7 @@ export function CombosPage() {
           <form onSubmit={add} className="flex flex-wrap items-end gap-3">
             <div className="flex min-w-32 flex-1 flex-col gap-1.5">
               <Label htmlFor="comboName">name</Label>
-              <Input
-                id="comboName"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="primary"
-              />
+              <Input id="comboName" value={name} onChange={(e) => setName(e.target.value)} placeholder="primary" />
             </div>
             <div className="flex min-w-48 flex-[2] flex-col gap-1.5">
               <Label>

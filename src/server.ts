@@ -1,22 +1,37 @@
-import type { Server } from "bun";
 import { mkdirSync } from "node:fs";
-import { Store } from "./db";
-import { buildBaseUrl, CooldownStore, handleChat, type ChatDeps } from "./route";
-import { customProviderIds, getProvider, providerIds, registerCustomProvider, unregisterCustomProvider, type Provider } from "./registry";
+import type { Server } from "bun";
+import { extractApiKey, generateApiKey, safeEqual } from "./auth";
+import { type ApiAuth, Store } from "./db";
 import { isReasoningModel } from "./reasoning";
+import {
+  customProviderIds,
+  getProvider,
+  type Provider,
+  providerIds,
+  registerCustomProvider,
+  unregisterCustomProvider,
+} from "./registry";
 import { handleResponses } from "./responses";
+import { buildBaseUrl, type ChatDeps, CooldownStore, handleChat } from "./route";
 
 const PORT = Number(process.env.PORT ?? 20128);
 const DATA_DIR = process.env.TROY_DATA ?? "data";
 
 mkdirSync(DATA_DIR, { recursive: true });
-const store = new Store(DATA_DIR + "/troy.db");
+const store = new Store(`${DATA_DIR}/troy.db`);
 store.startLogFlush(2000);
 const cooldowns = new CooldownStore();
 
 // load user-defined providers into the registry
 for (const p of store.listCustomProviders()) {
   registerCustomProvider(p as unknown as Provider);
+}
+
+// troy's own api key — generate once at boot, persist it
+let apiAuth: ApiAuth = store.getApiAuth();
+if (!apiAuth.key) {
+  apiAuth.key = generateApiKey();
+  store.putApiAuth(apiAuth);
 }
 
 function loadSettings() {
@@ -29,7 +44,10 @@ function refreshSettings() {
 }
 
 function json(data: unknown, status = 200, extra?: Record<string, string>): Response {
-  return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json", "access-control-allow-origin": "*", ...extra } });
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "content-type": "application/json", "access-control-allow-origin": "*", ...extra },
+  });
 }
 
 function readBody(request: Request): Promise<unknown> {
@@ -83,9 +101,15 @@ const STATUS_OK = "200 OK";
 
 function stats(): unknown {
   const byModel = store.raw
-    .query("SELECT provider, model, COUNT(*) n, SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) ok, AVG(latency_ms) av, MAX(ts) last FROM usage_history GROUP BY model, provider ORDER BY n DESC LIMIT 500")
+    .query(
+      "SELECT provider, model, COUNT(*) n, SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) ok, AVG(latency_ms) av, MAX(ts) last FROM usage_history GROUP BY model, provider ORDER BY n DESC LIMIT 500",
+    )
     .all(STATUS_OK) as unknown as StatRow[];
-  const lats = (store.raw.query("SELECT latency_ms FROM usage_history WHERE latency_ms IS NOT NULL ORDER BY latency_ms ASC LIMIT 1000").all() as { latency_ms: number }[]).map((r) => r.latency_ms);
+  const lats = (
+    store.raw
+      .query("SELECT latency_ms FROM usage_history WHERE latency_ms IS NOT NULL ORDER BY latency_ms ASC LIMIT 1000")
+      .all() as { latency_ms: number }[]
+  ).map((r) => r.latency_ms);
   const p95 = lats.length ? lats[Math.min(lats.length - 1, Math.floor(lats.length * 0.95))] : 0;
   // derive totals + byProvider from byModel — 2 queries instead of 4
   let n = 0;
@@ -108,23 +132,15 @@ function stats(): unknown {
   return {
     totals: { requests: n, ok, fail: n - ok, avg_ms: n ? Math.round(w / n) : 0, p95_ms: Math.round(p95) },
     byProvider,
-    byModel: byModel.map((r) => ({ provider: r.provider, model: r.model, requests: r.n, ok: r.ok, avg_ms: Math.round(r.av), last: r.last })),
+    byModel: byModel.map((r) => ({
+      provider: r.provider,
+      model: r.model,
+      requests: r.n,
+      ok: r.ok,
+      avg_ms: Math.round(r.av),
+      last: r.last,
+    })),
   };
-}
-
-function topology(windowS: number): unknown {
-  const since = new Date(Date.now() - windowS * 1000).toISOString();
-  const rows = store.raw
-    .query("SELECT provider, COUNT(*) n, SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) ok, MAX(ts) last FROM usage_history WHERE ts >= ? GROUP BY provider")
-    .all(STATUS_OK, since) as unknown as { provider: string; n: number; ok: number; last: string }[];
-  const lastRow = store.raw.query("SELECT provider FROM usage_history WHERE ts >= ? ORDER BY ts DESC, id DESC LIMIT 1").get(since) as { provider: string } | null;
-  const nowMs = Date.now();
-  const providers = rows.map((r) => {
-    const active = nowMs - Date.parse(r.last) <= 10_000;
-    const state = active ? "active" : r.ok < r.n ? "error" : r.provider === lastRow?.provider ? "last" : "idle";
-    return { id: r.provider, label: r.provider, state, count: r.n, ok: r.ok };
-  });
-  return { activeCount: providers.filter((p) => p.state === "active").length, providers };
 }
 
 function providerCatalog(): unknown[] {
@@ -135,12 +151,23 @@ function providerCatalog(): unknown[] {
   const customs = new Set(customProviderIds());
   return providerIds().map((id) => {
     const p = getProvider(id)!;
-    return { id, name: p.name, custom: customs.has(id), connected: counts.get(id) ?? 0, baseUrl: p.baseUrl, auth: p.auth, aliases: p.aliases, placeholders: p.placeholders ?? [] };
+    return {
+      id,
+      name: p.name,
+      custom: customs.has(id),
+      connected: counts.get(id) ?? 0,
+      baseUrl: p.baseUrl,
+      auth: p.auth,
+      aliases: p.aliases,
+      placeholders: p.placeholders ?? [],
+    };
   });
 }
 
-
-async function handleChatRequest(request: Request, server: { timeout: (req: Request, ms: number) => void }): Promise<Response> {
+async function handleChatRequest(
+  request: Request,
+  server: { timeout: (req: Request, ms: number) => void },
+): Promise<Response> {
   const body = await readBody(request);
   if (!body) return json({ error: { message: "Invalid JSON body", type: "invalid_request_error" } }, 400);
   const res = await handleChat(body as Record<string, unknown>, buildDeps(request));
@@ -148,7 +175,10 @@ async function handleChatRequest(request: Request, server: { timeout: (req: Requ
   return res;
 }
 
-async function handleResponsesRequest(request: Request, server: { timeout: (req: Request, ms: number) => void }): Promise<Response> {
+async function handleResponsesRequest(
+  request: Request,
+  server: { timeout: (req: Request, ms: number) => void },
+): Promise<Response> {
   const body = await readBody(request);
   if (!body) return json({ error: { message: "Invalid JSON body", type: "invalid_request_error" } }, 400);
   const res = await handleResponses(body as Record<string, unknown>, buildDeps(request));
@@ -160,7 +190,12 @@ function cors(request: Request): Response {
   const origin = request.headers.get("origin");
   return new Response(null, {
     status: 204,
-    headers: { "access-control-allow-origin": origin ?? "*", "access-control-allow-methods": "GET,POST,PUT,DELETE,OPTIONS", "access-control-allow-headers": "content-type,authorization,x-api-key", "access-control-max-age": "86400" },
+    headers: {
+      "access-control-allow-origin": origin ?? "*",
+      "access-control-allow-methods": "GET,POST,PUT,DELETE,OPTIONS",
+      "access-control-allow-headers": "content-type,authorization,x-api-key",
+      "access-control-max-age": "86400",
+    },
   });
 }
 
@@ -178,8 +213,21 @@ function staticFile(pathname: string): Response | null {
   if (rel === "app.js") rel = "dist/app.js";
   if (rel === "styles.css") rel = "dist/styles.css";
   const file = Bun.file(`${import.meta.dir}/../dashboard/${rel}`);
-  const ext = "." + rel.split(".").pop();
-  return new Response(file, { headers: { "content-type": MIME[ext] ?? "application/octet-stream", "cache-control": "no-cache" } });
+  const ext = `.${rel.split(".").pop()}`;
+  return new Response(file, {
+    headers: { "content-type": MIME[ext] ?? "application/octet-stream", "cache-control": "no-cache" },
+  });
+}
+
+/** The OpenAI-compatible surface CLI tools talk to — everything under /v1. */
+function isV1Path(path: string, method: string): boolean {
+  if (method === "POST") {
+    return path === "/v1/chat/completions" || path === "/v1/messages" || path === "/v1/responses";
+  }
+  if (method === "GET") {
+    return path === "/v1/models" || path.startsWith("/v1/models/");
+  }
+  return false;
 }
 
 const server: Server<undefined> = Bun.serve({
@@ -190,7 +238,47 @@ const server: Server<undefined> = Bun.serve({
 
     if (request.method === "OPTIONS") return cors(request);
 
-    if (request.method === "POST" && (path === "/v1/chat/completions" || path === "/v1/messages" || path === "/v1/responses")) {
+    // troy's own api key — every /v1 request must carry it while auth is on
+    if (isV1Path(path, request.method) && apiAuth.on === 1) {
+      const given = extractApiKey(request);
+      if (!given || !safeEqual(given, apiAuth.key)) {
+        return json(
+          {
+            error: {
+              message: "missing or invalid troy api key — send Authorization: Bearer <key> or x-api-key",
+              type: "invalid_request_error",
+              code: "invalid_api_key",
+            },
+          },
+          401,
+          { "www-authenticate": "Bearer" },
+        );
+      }
+    }
+
+    if (path === "/api/key") {
+      if (request.method === "GET") return json({ key: apiAuth.key, on: apiAuth.on === 1 });
+      if (request.method === "PUT") {
+        return readBody(request).then((b) => {
+          const body = b as { on?: boolean } | null;
+          if (body && typeof body.on === "boolean") {
+            apiAuth = { ...apiAuth, on: body.on ? 1 : 0 };
+            store.putApiAuth(apiAuth);
+          }
+          return json({ key: apiAuth.key, on: apiAuth.on === 1 });
+        });
+      }
+    }
+    if (path === "/api/key/rotate" && request.method === "POST") {
+      apiAuth = { ...apiAuth, key: generateApiKey() };
+      store.putApiAuth(apiAuth);
+      return json({ key: apiAuth.key, on: apiAuth.on === 1 });
+    }
+
+    if (
+      request.method === "POST" &&
+      (path === "/v1/chat/completions" || path === "/v1/messages" || path === "/v1/responses")
+    ) {
       if (path === "/v1/responses") return handleResponsesRequest(request, server);
       return handleChatRequest(request, server);
     }
@@ -199,9 +287,9 @@ const server: Server<undefined> = Bun.serve({
       return json({ object: "list", data: modelsList() });
     }
 
-    if (request.method === "GET" && path === "/api/topology") {
-      const windowS = Math.min(3600, Math.max(5, Number(url.searchParams.get("window") ?? 60)));
-      return json(topology(windowS));
+    if (request.method === "GET" && path === "/api/stats/daily") {
+      const days = Math.min(30, Math.max(1, Number(url.searchParams.get("days") ?? 7)));
+      return json(store.statsDaily(days));
     }
 
     if (request.method === "GET" && path === "/api/stats") {
@@ -222,7 +310,9 @@ const server: Server<undefined> = Bun.serve({
       else if (conn && def.auth === "raw") headers["x-api-key"] = conn.api_key;
       for (const [k, v] of Object.entries(def.headers ?? {})) headers[k] = v;
       const base = conn ? buildBaseUrl(def, conn) : def.baseUrl;
-      const modelsUrl = def.modelsUrl ?? (base.endsWith("/chat/completions") ? base.replace(/\/chat\/completions$/, "/models") : base + "/models");
+      const modelsUrl =
+        def.modelsUrl ??
+        (base.endsWith("/chat/completions") ? base.replace(/\/chat\/completions$/, "/models") : `${base}/models`);
       // provider needs a key but has none — don't hit upstream with a doomed request
       if (!conn && def.auth !== "none") {
         return json({ error: "no key", url: modelsUrl, models: [] }, 502);
@@ -245,10 +335,16 @@ const server: Server<undefined> = Bun.serve({
           const data = (await res.json()) as { data?: { id: string; name?: string }[] };
           return json({
             url: modelsUrl,
-            models: (data.data ?? []).map((m) => ({ id: m.id, name: m.name ?? m.id, thinking: isReasoningModel(m.id) })),
+            models: (data.data ?? []).map((m) => ({
+              id: m.id,
+              name: m.name ?? m.id,
+              thinking: isReasoningModel(m.id),
+            })),
           });
         })
-        .catch((e: unknown) => json({ error: e instanceof Error ? e.message : String(e), url: modelsUrl, models: [] }, 502));
+        .catch((e: unknown) =>
+          json({ error: e instanceof Error ? e.message : String(e), url: modelsUrl, models: [] }, 502),
+        );
     }
 
     if (path === "/api/models") {
@@ -302,7 +398,8 @@ const server: Server<undefined> = Bun.serve({
           return json(store.putCombo(body.name, body.models as string[]));
         });
       }
-    }    if (path.startsWith("/api/combos/") && request.method === "DELETE") {
+    }
+    if (path.startsWith("/api/combos/") && request.method === "DELETE") {
       store.deleteCombo(decodeURIComponent(path.slice("/api/combos/".length)));
       return json({ ok: true });
     }
@@ -340,10 +437,26 @@ const server: Server<undefined> = Bun.serve({
       if (request.method === "GET") return json(store.listConnections());
       if (request.method === "POST") {
         return readBody(request).then((b) => {
-          const body = b as { provider?: string; api_key?: string; name?: string; base_url?: string; extra?: string; priority?: number } | null;
+          const body = b as {
+            provider?: string;
+            api_key?: string;
+            name?: string;
+            base_url?: string;
+            extra?: string;
+            priority?: number;
+          } | null;
           if (!body?.provider || !body.api_key) return json({ error: "need provider + api_key" }, 400);
           if (!getProvider(body.provider)) return json({ error: `unknown provider: ${body.provider}` }, 400);
-          return json(store.addConnection({ provider: body.provider, api_key: body.api_key, name: body.name, base_url: body.base_url, extra: body.extra, priority: body.priority }));
+          return json(
+            store.addConnection({
+              provider: body.provider,
+              api_key: body.api_key,
+              name: body.name,
+              base_url: body.base_url,
+              extra: body.extra,
+              priority: body.priority,
+            }),
+          );
         });
       }
     }
