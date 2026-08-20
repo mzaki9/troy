@@ -47,15 +47,19 @@ function SettingSelect({
 export function SettingsPage() {
   const settings = useApi<Settings>("/api/settings");
   const [form, setForm] = useState<Settings | null>(null);
+  const [serverForm, setServerForm] = useState<Settings | null>(null); // last value the server echoed
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     const d = settings.data;
-    if (d) setForm((prev) => prev ?? d);
+    if (d) {
+      setForm((prev) => prev ?? d);
+      setServerForm((prev) => prev ?? d);
+    }
   }, [settings.data]);
 
-  const dirty = !!form && !!settings.data && JSON.stringify(form) !== JSON.stringify(settings.data);
+  const dirty = !!form && !!serverForm && JSON.stringify(form) !== JSON.stringify(serverForm);
 
   const save = async () => {
     if (!form) return;
@@ -63,6 +67,7 @@ export function SettingsPage() {
     try {
       const res = await api<Settings>("/api/settings", { method: "PUT", body: JSON.stringify(form) });
       setForm(res);
+      setServerForm(res);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } finally {

@@ -343,21 +343,25 @@ function ModelsCard({ providerId, refresh = 0 }: { providerId: string; refresh?:
     saved.refetch();
   };
 
-  const fetchModels = async () => {
-    setErr(null);
-    try {
-      const res = await api(`/api/providers/${providerId}/models`);
-      const data = res as { models?: { id: string; name: string; thinking?: boolean }[]; url?: string };
-      setModels(data.models ?? []);
-      setUrl(data.url ?? null);
-    } catch (e2) {
-      setErr(parseApiError(e2));
-    }
-  };
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: fetchModels is intentionally stable; `refresh` re-runs it
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `refresh` is an external re-fetch trigger (key toggles), intentionally not read in the body
   useEffect(() => {
-    fetchModels();
+    let alive = true;
+    setErr(null);
+    setModels(null);
+    setUrl(null);
+    api(`/api/providers/${providerId}/models`)
+      .then((res) => {
+        if (!alive) return;
+        const data = res as { models?: { id: string; name: string; thinking?: boolean }[]; url?: string };
+        setModels(data.models ?? []);
+        setUrl(data.url ?? null);
+      })
+      .catch((e2) => {
+        if (alive) setErr(parseApiError(e2));
+      });
+    return () => {
+      alive = false;
+    };
   }, [providerId, refresh]);
 
   return (

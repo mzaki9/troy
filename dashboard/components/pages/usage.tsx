@@ -318,9 +318,9 @@ function PeriodPills() {
 // ---- page ----
 
 export function UsagePage() {
-  const stats = useApi<StatsData>("/api/stats", { interval: 3000 });
-  const daily = useApi<DailyData>("/api/stats/daily?days=7", { interval: 3000 });
-  const logs = useApi<LogRow[]>("/api/logs", { interval: 3000 });
+  const stats = useApi<StatsData>("/api/stats", { interval: 10000 });
+  const daily = useApi<DailyData>("/api/stats/daily?days=7", { interval: 15000 });
+  const logs = useApi<LogRow[]>("/api/logs", { interval: 5000 });
 
   const t = stats.data?.totals;
   const rate = t?.requests ? (t.ok / t.requests) * 100 : undefined;
