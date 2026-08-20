@@ -22,7 +22,7 @@ import {
 import { handleResponses } from "./responses";
 import { buildBaseUrl, type ChatDeps, CooldownStore, handleChat } from "./route";
 
-const PORT = Number(process.env.PORT ?? 20128);
+const PORT = Number(process.env.PORT ?? 31337);
 const DATA_DIR = process.env.TROY_DATA ?? "data";
 
 mkdirSync(DATA_DIR, { recursive: true });
