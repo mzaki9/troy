@@ -11,23 +11,6 @@ const COOLDOWN_LONG_MS = 120000;
 const COOLDOWN_SHORT_MS = 5000;
 const STICKY_ROUND_ROBIN_LIMIT = 3;
 
-/** Keyless opencode (Zen free tier) — same allow-list OmniRoute uses. */
-const OPENCODE_FREE_MODELS = new Set([
-  "big-pickle",
-  "deepseek-v4-flash-free",
-  "mimo-v2.5-free",
-  "hy3-free",
-  "nemotron-3-ultra-free",
-  "north-mini-code-free",
-]);
-
-/** Free if `-free` suffix or on the known list; unknown ⇒ premium (fail-safe). */
-function isFreeOpencodeModel(model: string, provider: string): boolean {
-  if (provider !== "opencode") return true;
-  if (model.endsWith("-free")) return true;
-  return OPENCODE_FREE_MODELS.has(model);
-}
-
 const ERROR_TEXT_BACKOFF = ["rate limit", "too many requests", "quota exceeded", "capacity", "overloaded"];
 
 const now = () => Date.now();
@@ -281,11 +264,6 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
       if (effort) effBody.reasoning_effort = effort;
     } else {
       delete effBody.reasoning_effort;
-    }
-    if (def.auth === "none" && !isFreeOpencodeModel(model, def.id)) {
-      lastError = `Model '${model}' requires an API key — use 'opencode-go' with a zen key or pick a free-tier model`;
-      lastStatus = 402;
-      continue;
     }
     let accounts = deps.store.listConnections(provider);
     if (def.auth === "none" && accounts.length === 0) {
