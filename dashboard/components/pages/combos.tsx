@@ -1,6 +1,7 @@
 import { ArrowRight, Brain, ChevronsUpDown, Plus, Trash2, X } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
 import { useState } from "react";
+import { cn } from "../../lib/utils";
 import type { Combo, SavedModel } from "../api";
 import { api, useApi } from "../api";
 import {
@@ -17,7 +18,15 @@ import {
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "../ui/card";
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "../ui/command";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  useCommandState,
+} from "../ui/command";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
@@ -48,6 +57,82 @@ function DeleteComboDialog({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+  );
+}
+
+/**
+ * Model picker for a new combo.
+ *
+ * NOTE: the "use raw model" action is a forceMount CommandItem, NOT a
+ * CommandItem nested inside CommandEmpty. A filterable item inside
+ * CommandEmpty makes cmdk's `filtered.count` flip between 0 and 1 forever
+ * (mount → count 1 → Empty hides the item → unmount → count 0 → Empty shows
+ * it…) and React throws #185 "Maximum update depth exceeded". forceMount
+ * items are excluded from filtering (upstream fix cmdk PR #143), so the
+ * action item is shown manually via useCommandState instead.
+ */
+function DesiredResults({
+  desired,
+  query,
+  onAdd,
+  onAddRaw,
+}: {
+  desired: SavedModel[];
+  query: string;
+  onAdd: (spec: string) => void;
+  onAddRaw: (spec: string) => void;
+}) {
+  const isEmpty = useCommandState((state) => state.filtered.count === 0);
+  const showRawAction = isEmpty && query.includes("/");
+  return (
+    <>
+      <CommandItem
+        forceMount
+        value={query}
+        onSelect={() => onAddRaw(query)}
+        className={cn(showRawAction ? null : "hidden")}
+      >
+        use “<span className="font-mono">{query}</span>”
+      </CommandItem>
+      {!query.includes("/") && (
+        <CommandEmpty>
+          <span className="text-muted-foreground">
+            type as <span className="font-mono">provider/model</span> to add a raw model
+          </span>
+        </CommandEmpty>
+      )}
+      <CommandGroup heading="desired">
+        {desired.map((m) => (
+          <CommandItem key={m.spec} value={m.spec} onSelect={() => onAdd(m.spec)}>
+            <span className="min-w-0 flex-1 truncate font-mono text-xs">{m.spec}</span>
+            {m.thinking ? <Brain className="size-3 shrink-0 text-muted-foreground" /> : null}
+          </CommandItem>
+        ))}
+      </CommandGroup>
+    </>
+  );
+}
+
+function DesiredPicker({
+  desired,
+  query,
+  onQuery,
+  onAdd,
+  onAddRaw,
+}: {
+  desired: SavedModel[];
+  query: string;
+  onQuery: (q: string) => void;
+  onAdd: (spec: string) => void;
+  onAddRaw: (spec: string) => void;
+}) {
+  return (
+    <Command>
+      <CommandInput placeholder="search desired models…" onValueChange={onQuery} />
+      <CommandList>
+        <DesiredResults desired={desired} query={query} onAdd={onAdd} onAddRaw={onAddRaw} />
+      </CommandList>
+    </Command>
   );
 }
 
@@ -187,32 +272,13 @@ export function CombosPage() {
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent className="w-[min(380px,calc(100vw-2rem))] p-0" align="start">
-                    <Command>
-                      <CommandInput placeholder="search desired models…" onValueChange={setQuery} />
-                      <CommandList>
-                        <CommandEmpty>
-                          <CommandItem value={query} onSelect={() => addRaw(query)}>
-                            {query.includes("/") ? (
-                              <>
-                                use “<span className="font-mono">{query}</span>”
-                              </>
-                            ) : (
-                              <span className="text-muted-foreground">
-                                type as <span className="font-mono">provider/model</span> to add a raw model
-                              </span>
-                            )}
-                          </CommandItem>
-                        </CommandEmpty>
-                        <CommandGroup heading="desired">
-                          {(desired.data ?? []).map((m) => (
-                            <CommandItem key={m.spec} value={m.spec} onSelect={() => addModel(m.spec)}>
-                              <span className="min-w-0 flex-1 truncate font-mono text-xs">{m.spec}</span>
-                              {m.thinking ? <Brain className="size-3 shrink-0 text-muted-foreground" /> : null}
-                            </CommandItem>
-                          ))}
-                        </CommandGroup>
-                      </CommandList>
-                    </Command>
+                    <DesiredPicker
+                      desired={desired.data ?? []}
+                      query={query}
+                      onQuery={setQuery}
+                      onAdd={addModel}
+                      onAddRaw={addRaw}
+                    />
                   </PopoverContent>
                 </Popover>
               </div>
