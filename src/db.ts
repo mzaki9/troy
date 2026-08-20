@@ -17,6 +17,8 @@ export interface Combo {
   id: string;
   name: string;
   models: string[];
+  /** Chain-level routing: "fallback" (saved order) | "random" | "round-robin". */
+  strategy: string;
 }
 
 export interface SavedModel {
@@ -82,7 +84,8 @@ export class Store {
       CREATE TABLE IF NOT EXISTS combos (
         id TEXT PRIMARY KEY,
         name TEXT UNIQUE NOT NULL,
-        models TEXT NOT NULL
+        models TEXT NOT NULL,
+        strategy TEXT NOT NULL DEFAULT 'fallback'
       );
       CREATE TABLE IF NOT EXISTS models (
         spec TEXT PRIMARY KEY,
@@ -120,6 +123,11 @@ export class Store {
     const cols = this.db.query("PRAGMA table_info(connections)").all() as { name: string }[];
     if (!cols.some((c) => c.name === "name")) {
       this.db.run("ALTER TABLE connections ADD COLUMN name TEXT");
+    }
+    // add combo strategy column on pre-existing databases
+    const ccols = this.db.query("PRAGMA table_info(combos)").all() as { name: string }[];
+    if (!ccols.some((c) => c.name === "strategy")) {
+      this.db.run("ALTER TABLE combos ADD COLUMN strategy TEXT NOT NULL DEFAULT 'fallback'");
     }
   }
 
@@ -204,26 +212,28 @@ export class Store {
       id: string;
       name: string;
       models: string;
+      strategy: string;
     }[];
     return rows.map((r) => ({ ...r, models: JSON.parse(r.models) }));
   }
 
   getCombo(name: string): Combo | undefined {
     const r = this.db.query("SELECT * FROM combos WHERE name = ?").get(name) as unknown as
-      | { id: string; name: string; models: string }
+      | { id: string; name: string; models: string; strategy: string }
       | undefined;
     return r ? { ...r, models: JSON.parse(r.models) } : undefined;
   }
 
-  putCombo(name: string, models: string[]): { id: string; name: string; models: string[] } {
+  putCombo(name: string, models: string[], strategy = "fallback"): Combo {
     const row = this.db
       .query(
-        "INSERT INTO combos (id, name, models) VALUES (?, ?, ?) ON CONFLICT (name) DO UPDATE SET models = excluded.models RETURNING id, name, models",
+        "INSERT INTO combos (id, name, models, strategy) VALUES (?, ?, ?, ?) ON CONFLICT (name) DO UPDATE SET models = excluded.models, strategy = excluded.strategy RETURNING id, name, models, strategy",
       )
-      .get(crypto.randomUUID(), name, JSON.stringify(models)) as unknown as {
+      .get(crypto.randomUUID(), name, JSON.stringify(models), strategy) as unknown as {
       id: string;
       name: string;
       models: string;
+      strategy: string;
     };
     return { ...row, models: JSON.parse(row.models) };
   }

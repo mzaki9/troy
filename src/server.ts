@@ -506,7 +506,7 @@ const server: Server<undefined> = Bun.serve({
       if (request.method === "GET") return json(store.listCombos());
       if (request.method === "POST") {
         return readBody(request).then((b) => {
-          const body = b as { name?: string; models?: unknown[] } | null;
+          const body = b as { name?: string; models?: unknown[]; strategy?: string } | null;
           if (!body?.name || !Array.isArray(body.models)) return json({ error: "need name + models[]" }, 400);
           for (const m of body.models) {
             if (typeof m !== "string" || !m.includes("/")) {
@@ -517,7 +517,9 @@ const server: Server<undefined> = Bun.serve({
               return json({ error: `unknown provider: ${prov}` }, 400);
             }
           }
-          return json(store.putCombo(body.name, body.models as string[]));
+          const strategy =
+            body.strategy && ["fallback", "random", "round-robin"].includes(body.strategy) ? body.strategy : "fallback";
+          return json(store.putCombo(body.name, body.models as string[], strategy));
         });
       }
     }

@@ -30,6 +30,7 @@ import {
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Skeleton } from "../ui/skeleton";
 
 function DeleteComboDialog({
@@ -141,6 +142,7 @@ export function CombosPage() {
   const desired = useApi<SavedModel[]>("/api/models");
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
+  const [strategy, setStrategy] = useState("fallback");
   const [added, setAdded] = useState<string[]>([]);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -165,9 +167,10 @@ export function CombosPage() {
     if (!name.trim() || added.length === 0) return;
     await api("/api/combos", {
       method: "POST",
-      body: JSON.stringify({ name: name.trim(), models: added }),
+      body: JSON.stringify({ name: name.trim(), models: added, strategy }),
     });
     setName("");
+    setStrategy("fallback");
     setAdded([]);
     setAdding(false);
     combos.refetch();
@@ -177,7 +180,7 @@ export function CombosPage() {
     <Card>
       <CardHeader className="flex-row items-center justify-between">
         <CardTitle>Combos</CardTitle>
-        <span className="text-xs text-muted-foreground">one name → ordered fallback chain</span>
+        <span className="text-xs text-muted-foreground">one name → chain with fallback / random / round-robin</span>
       </CardHeader>
       <CardContent>
         {!combos.data ? (
@@ -196,6 +199,9 @@ export function CombosPage() {
               <div key={c.name} className="flex items-center justify-between gap-3 py-3">
                 <div className="flex min-w-0 flex-wrap items-center gap-3">
                   <span className="w-28 shrink-0 truncate text-sm font-medium">{c.name}</span>
+                  <Badge variant="outline" className="font-mono text-[10px] font-normal text-muted-foreground">
+                    {c.strategy ?? "fallback"}
+                  </Badge>
                   <div className="flex flex-wrap items-center gap-1.5">
                     {c.models.map((m, i) => (
                       <span key={m} className="flex items-center gap-1.5">
@@ -282,6 +288,21 @@ export function CombosPage() {
                   </PopoverContent>
                 </Popover>
               </div>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="comboStrategy">strategy</Label>
+              <Select value={strategy} onValueChange={setStrategy}>
+                <SelectTrigger id="comboStrategy" className="w-40 font-mono text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {["fallback", "random", "round-robin"].map((s) => (
+                    <SelectItem key={s} value={s} className="font-mono text-xs">
+                      {s}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <Button type="submit" disabled={!name.trim() || added.length === 0}>
               save

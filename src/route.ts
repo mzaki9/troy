@@ -10,6 +10,12 @@ const TRANSIENT_COOLDOWN_MS = 30000;
 const COOLDOWN_LONG_MS = 120000;
 const COOLDOWN_SHORT_MS = 5000;
 const STICKY_ROUND_ROBIN_LIMIT = 3;
+/** Circuit breaker: N failures within the window opens a member; it then
+ *  fast-skips for OPEN_MS until a probe succeeds (half-open). */
+const CIRCUIT_WINDOW_MS = 60000;
+const CIRCUIT_THRESHOLD = 3;
+const CIRCUIT_OPEN_MS = 30000;
+const COMBO_STRATEGIES = new Set(["fallback", "random", "round-robin"]);
 
 const ERROR_TEXT_BACKOFF = ["rate limit", "too many requests", "quota exceeded", "capacity", "overloaded"];
 
@@ -26,10 +32,30 @@ export class CooldownStore {
   private rr = new Map<string, { id: string; count: number }>();
   /** last failure text per account key — surfaced in 503s so "unavailable" is diagnosable */
   private reasons = new Map<string, string>();
+  /** circuit breaker: member (provider/model) → { failures: timestamps[], openUntil } */
+  private circuits = new Map<string, { fails: number[]; openUntil: number }>();
+  /** per-combo round-robin start index (chain-level rotation) */
+  private rrChain = new Map<string, number>();
+
+  /** next start index for a round-robin combo chain */
+  nextChainStart(name: string): number {
+    const n = this.rrChain.get(name) ?? 0;
+    this.rrChain.set(name, n + 1);
+    return n;
+  }
 
   /** The reason an account got locked, so the 503 can explain itself. */
   lastFailReason(id: string, key: string): string | null {
     return this.reasons.get(`${id}|${key}`) ?? this.reasons.get(`${id}|*`) ?? null;
+  }
+
+  /** true while a member's circuit is open — the fallback walk skips it fast. */
+  isOpen(key: string): boolean {
+    const c = this.circuits.get(key);
+    if (!c) return false;
+    if (c.openUntil > now()) return true;
+    this.circuits.delete(key);
+    return false;
   }
 
   backoffLevel(id: string): number {
@@ -46,7 +72,7 @@ export class CooldownStore {
     return this.lockExpiry(id, key) <= now();
   }
 
-  fail(id: string, key: string, status: number, errText: string) {
+  fail(id: string, key: string, status: number, errText: string, circuitKey = key) {
     const s = this.ensure(id);
     const { cooldownMs, newBackoffLevel } = classify(status, errText, s.backoff);
     s.until = now() + cooldownMs;
@@ -54,9 +80,10 @@ export class CooldownStore {
     s.locks.set(key, now() + cooldownMs);
     const reason = extractReason(errText);
     if (reason) this.reasons.set(`${id}|${key}`, reason);
+    this.countFailure(circuitKey);
   }
 
-  success(id: string, key: string) {
+  success(id: string, key: string, circuitKey = key) {
     const s = this.states.get(id);
     if (!s) return;
     s.locks.delete(key);
@@ -68,6 +95,16 @@ export class CooldownStore {
       s.backoff = 0;
       this.reasons.delete(`${id}|${key}`);
     }
+    // half-open probe succeeded → close the circuit
+    this.circuits.delete(circuitKey);
+  }
+
+  private countFailure(key: string) {
+    const c = this.circuits.get(key) ?? { fails: [], openUntil: 0 };
+    c.fails = c.fails.filter((t) => t > now() - CIRCUIT_WINDOW_MS);
+    c.fails.push(now());
+    if (c.fails.length >= CIRCUIT_THRESHOLD) c.openUntil = now() + CIRCUIT_OPEN_MS;
+    this.circuits.set(key, c);
   }
 
   earliestRetryAfter(): number | null {
@@ -180,6 +217,16 @@ function parseModelStr(spec: string): { provider: string; model: string } {
   return { provider: inferProvider(spec).id, model: spec };
 }
 
+/** Fisher-Yates shuffle — random chain strategy. */
+function shuffle<T>(arr: T[]): T[] {
+  const out = [...arr];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor((crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32) * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
 function safeExtra(conn: Connection): Record<string, string> {
   try {
     return JSON.parse(conn.extra || "{}");
@@ -235,8 +282,15 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
   if (typeof body.model !== "string" || !body.model) return openaiError(400, "Missing 'model' in request body");
 
   const combo = deps.store.getCombo(body.model);
-  const chain: string[] = combo ? combo.models : [body.model];
+  const comboStrategy = combo && COMBO_STRATEGIES.has(combo.strategy) ? combo.strategy : "fallback";
+  let chain: string[] = combo ? combo.models : [body.model];
   if (chain.length === 0) return openaiError(400, `Combo '${body.model}' has no models`);
+  // chain-level load balancing: random shuffles, round-robin rotates start
+  if (combo && comboStrategy === "random") chain = shuffle(chain);
+  if (combo && comboStrategy === "round-robin") {
+    const start = deps.cooldowns.nextChainStart(combo.name) % chain.length;
+    chain = [...chain.slice(start), ...chain.slice(0, start)];
+  }
 
   if (deps.rtkOn) compressMessages(body);
   if (deps.cavemanLevel !== "off") injectCaveman(body, deps.cavemanLevel as CavemanLevel);
@@ -283,6 +337,12 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
       ];
     }
     const excluded = new Set<string>();
+    const circuitKey = `${provider}/${model}`;
+    if (deps.cooldowns.isOpen(circuitKey)) {
+      lastError = `${circuitKey} circuit open — skipping (breaker)`; // will be overwritten if a later member succeeds
+      lastStatus = 503;
+      continue;
+    }
 
     while (true) {
       const eligible = accounts.filter(
@@ -311,7 +371,7 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
         res = await forward(wrapped?.body ?? effBody, conn, def, deps.signal);
       } catch (err) {
         const msg = err instanceof Error ? err.message : "network error";
-        deps.cooldowns.fail(conn.id, model, 0, msg);
+        deps.cooldowns.fail(conn.id, model, 0, msg, circuitKey);
         lastError = msg;
         lastStatus = 502;
         excluded.add(conn.id);
@@ -319,7 +379,7 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
       }
 
       if (res.ok) {
-        deps.cooldowns.success(conn.id, model);
+        deps.cooldowns.success(conn.id, model, circuitKey);
         deps.onLog({ provider, model, combo: combo?.name, status: "200 OK", latency_ms: now() - t0 });
         if (cc) return commandCodeReply(res, stream, model, wrapped!.toolMap, deps.signal);
         return passthrough(res, stream);
@@ -327,7 +387,7 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
 
       const bodyText = await res.text().catch(() => "");
       if (cc) lastRaw = { body: bodyText, status: res.status };
-      deps.cooldowns.fail(conn.id, model, res.status, bodyText);
+      deps.cooldowns.fail(conn.id, model, res.status, bodyText, circuitKey);
       lastError = bodyText || res.statusText || `HTTP ${res.status}`;
       lastStatus = res.status;
       excluded.add(conn.id);

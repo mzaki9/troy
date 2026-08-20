@@ -6,7 +6,7 @@ import { cn } from "../lib/utils";
 export const PAGES: { id: PageId; label: string; desc: string; icon: LucideIcon }[] = [
   { id: "usage", label: "Usage", desc: "requests, providers, latency", icon: Gauge },
   { id: "providers", label: "Providers", desc: "OpenAI-compatible catalog + connections", icon: Network },
-  { id: "combos", label: "Combos", desc: "ordered fallback chains", icon: Layers },
+  { id: "combos", label: "Combos", desc: "fallback · random · round-robin chains", icon: Layers },
   { id: "tools", label: "CLI tools", desc: "Claude Code · Hermes · Codex · Cursor · OpenCode", icon: Terminal },
   { id: "settings", label: "Settings", desc: "routing & token savers", icon: Settings2 },
 ];

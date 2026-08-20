@@ -132,6 +132,72 @@ describe("combo fallback", () => {
   });
 });
 
+describe("combo strategies", () => {
+  function comboWith(ctx: ReturnType<typeof makeDeps>, strategy: string, specs: string[]) {
+    ctx.store.putCombo("s", specs, strategy);
+    return ctx;
+  }
+
+  test("random stays within the chain", async () => {
+    const ctx = comboWith(makeDeps(), "random", ["openai/gpt-4o", "deepseek/deepseek-chat", "mistral/mistral-large"]);
+    for (const p of ["openai", "deepseek", "mistral"]) addConn(ctx, p, "ok");
+    behaviors.set("ok", { status: 200, body: JSON.stringify({ ok: true }) });
+    for (let i = 0; i < 20; i++) {
+      const res = await handleChat({ model: "s", message: "hi" }, ctx.deps);
+      expect(res.status).toBe(200);
+    }
+  });
+
+  test("round-robin rotates the start spec across requests", async () => {
+    const ctx = comboWith(makeDeps(), "round-robin", [
+      "openai/gpt-4o",
+      "deepseek/deepseek-chat",
+      "mistral/mistral-large",
+    ]);
+    for (const p of ["openai", "deepseek", "mistral"]) addConn(ctx, p, "ok");
+    behaviors.set("ok", { status: 200, body: JSON.stringify({ ok: true }) });
+    // 3 requests → each start index hits once; capture the order of lastPayload.model
+    const models: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const res = await handleChat({ model: "s", message: "hi" }, ctx.deps);
+      expect(res.status).toBe(200);
+      models.push((lastPayload as { model: string }).model);
+    }
+    expect(models).toEqual(["gpt-4o", "deepseek-chat", "mistral-large"]);
+  });
+});
+
+describe("circuit breaker", () => {
+  test("3 failures in window opens → member skipped on next request", async () => {
+    const ctx = makeDeps();
+    ctx.store.putCombo("cb", ["openai/gpt-4o", "deepseek/deepseek-chat"]);
+    addConn(ctx, "openai", "bad");
+    addConn(ctx, "deepseek", "good");
+    behaviors.set("bad", { status: 500, body: "boom" });
+    behaviors.set("good", { status: 200, body: JSON.stringify({ ok: true }) });
+    // first 3 requests: openai fails 3× → circuit opens
+    for (let i = 0; i < 3; i++) {
+      await handleChat({ model: "cb", message: "hi" }, ctx.deps);
+    }
+    // 4th request: openai open → immediately deepseek
+    const res = await handleChat({ model: "cb", message: "hi" }, ctx.deps);
+    expect(res.status).toBe(200);
+    expect((lastPayload as { model: string }).model).toBe("deepseek-chat");
+  });
+
+  test("single failure does not trip the breaker", async () => {
+    const ctx = makeDeps();
+    ctx.store.putCombo("cb", ["openai/gpt-4o", "deepseek/deepseek-chat"]);
+    addConn(ctx, "openai", "bad");
+    addConn(ctx, "deepseek", "good");
+    behaviors.set("bad", { status: 500, body: "boom" });
+    behaviors.set("good", { status: 200, body: JSON.stringify({ ok: true }) });
+    await handleChat({ model: "cb", message: "hi" }, ctx.deps);
+    // single failure → breaker not open (account cooldown is separate)
+    expect(ctx.cd.isOpen("openai/gpt-4o")).toBe(false);
+  });
+});
+
 describe("errors", () => {
   test("unknown provider → 404", async () => {
     const ctx = makeDeps();

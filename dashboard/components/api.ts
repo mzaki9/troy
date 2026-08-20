@@ -28,6 +28,7 @@ export interface Connection {
 export interface Combo {
   name: string;
   models: string[];
+  strategy: string;
 }
 export interface SavedModel {
   spec: string;
