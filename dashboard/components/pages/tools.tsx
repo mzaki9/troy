@@ -391,7 +391,14 @@ export function ToolsPage() {
 
       <div className="grid gap-4 md:grid-cols-2">
         {CLI_TOOLS.map((t) => (
-          <ToolCard key={t.name} t={t} base={base} model={model} all={chosen} key_={key} />
+          <ToolCard
+            key={t.name}
+            t={t}
+            base={base}
+            model={model}
+            all={t.name === "OpenCode" ? [...chosen, ...comboList.map((c) => c.name)] : chosen}
+            key_={key}
+          />
         ))}
       </div>
     </div>
