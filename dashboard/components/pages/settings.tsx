@@ -7,6 +7,7 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "../ui/card
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Skeleton } from "../ui/skeleton";
 import { Switch } from "../ui/switch";
+import { SecurityCard } from "./security";
 
 const CAVEMAN_LEVELS = ["off", "lite", "full", "ultra", "wenyan-lite", "wenyan", "wenyan-ultra"];
 const PONYTAIL_LEVELS = ["off", "lite", "full", "ultra"];
@@ -70,65 +71,68 @@ export function SettingsPage() {
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Routing &amp; token savers</CardTitle>
-      </CardHeader>
-      <CardContent className="divide-y divide-border/60">
-        {!form ? (
-          <div className="space-y-5 py-2">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="flex items-center justify-between gap-4">
-                <div className="space-y-1.5">
-                  <Skeleton className="h-4 w-40" />
-                  <Skeleton className="h-3 w-64" />
+    <div className="space-y-5">
+      <Card>
+        <CardHeader>
+          <CardTitle>Routing &amp; token savers</CardTitle>
+        </CardHeader>
+        <CardContent className="divide-y divide-border/60">
+          {!form ? (
+            <div className="space-y-5 py-2">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="flex items-center justify-between gap-4">
+                  <div className="space-y-1.5">
+                    <Skeleton className="h-4 w-40" />
+                    <Skeleton className="h-3 w-64" />
+                  </div>
+                  <Skeleton className="h-9 w-48" />
                 </div>
-                <Skeleton className="h-9 w-48" />
-              </div>
-            ))}
-          </div>
-        ) : (
-          <>
-            <div className="flex items-center justify-between gap-4 py-4 first:pt-0">
-              <div>
-                <p className="text-sm font-medium">RTK token saver</p>
-                <p className="text-xs text-muted-foreground">
-                  compress tool-result blocks (grep, ls, git diff, tree, find…)
-                </p>
-              </div>
-              <Switch
-                checked={form.rtk_on === 1}
-                onCheckedChange={(v) => setForm({ ...form, rtk_on: v ? 1 : 0 })}
-                aria-label="RTK token saver"
-              />
+              ))}
             </div>
-            <SettingSelect
-              label="Account strategy"
-              value={form.strategy}
-              options={["fill-first", "round-robin"]}
-              onChange={(v) => setForm({ ...form, strategy: v })}
-            />
-            <SettingSelect
-              label="Caveman prompt"
-              value={form.caveman_level}
-              options={CAVEMAN_LEVELS}
-              onChange={(v) => setForm({ ...form, caveman_level: v })}
-            />
-            <SettingSelect
-              label="Ponytail"
-              value={form.ponytail_level}
-              options={PONYTAIL_LEVELS}
-              onChange={(v) => setForm({ ...form, ponytail_level: v })}
-            />
-          </>
-        )}
-      </CardContent>
-      <CardFooter className="justify-end border-t">
-        <Button onClick={save} disabled={!dirty || saving}>
-          {saved ? <Check className="size-4" /> : saving ? <Loader2 className="size-4 animate-spin" /> : null}
-          {saved ? "saved" : "save settings"}
-        </Button>
-      </CardFooter>
-    </Card>
+          ) : (
+            <>
+              <div className="flex items-center justify-between gap-4 py-4 first:pt-0">
+                <div>
+                  <p className="text-sm font-medium">RTK token saver</p>
+                  <p className="text-xs text-muted-foreground">
+                    compress tool-result blocks (grep, ls, git diff, tree, find…)
+                  </p>
+                </div>
+                <Switch
+                  checked={form.rtk_on === 1}
+                  onCheckedChange={(v) => setForm({ ...form, rtk_on: v ? 1 : 0 })}
+                  aria-label="RTK token saver"
+                />
+              </div>
+              <SettingSelect
+                label="Account strategy"
+                value={form.strategy}
+                options={["fill-first", "round-robin"]}
+                onChange={(v) => setForm({ ...form, strategy: v })}
+              />
+              <SettingSelect
+                label="Caveman prompt"
+                value={form.caveman_level}
+                options={CAVEMAN_LEVELS}
+                onChange={(v) => setForm({ ...form, caveman_level: v })}
+              />
+              <SettingSelect
+                label="Ponytail"
+                value={form.ponytail_level}
+                options={PONYTAIL_LEVELS}
+                onChange={(v) => setForm({ ...form, ponytail_level: v })}
+              />
+            </>
+          )}
+        </CardContent>
+        <CardFooter className="justify-end border-t">
+          <Button onClick={save} disabled={!dirty || saving}>
+            {saved ? <Check className="size-4" /> : saving ? <Loader2 className="size-4 animate-spin" /> : null}
+            {saved ? "saved" : "save settings"}
+          </Button>
+        </CardFooter>
+      </Card>
+      <SecurityCard />
+    </div>
   );
 }

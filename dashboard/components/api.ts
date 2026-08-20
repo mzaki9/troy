@@ -2,7 +2,17 @@ import { useCallback, useEffect, useState } from "react";
 
 export async function api<T>(path: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(path, { headers: { "content-type": "application/json" }, ...opts });
-  if (!res.ok) throw new Error(`${res.status} ${await res.text().catch(() => "")}`);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    let detail = text;
+    try {
+      const j = JSON.parse(text) as { error?: string };
+      if (typeof j?.error === "string" && j.error) detail = j.error;
+    } catch {
+      /* non-JSON body */
+    }
+    throw new Error(detail || String(res.status));
+  }
   return res.json() as Promise<T>;
 }
 

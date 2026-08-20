@@ -1,5 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { extractApiKey, generateApiKey, safeEqual } from "../src/auth";
+import {
+  DEFAULT_DASHBOARD_PASS,
+  extractApiKey,
+  generateApiKey,
+  hashPassword,
+  newSessionToken,
+  safeEqual,
+  verifyPassword,
+} from "../src/auth";
+import { Store } from "../src/db";
 
 describe("troy api key auth", () => {
   test("extracts a Bearer token", () => {
@@ -36,5 +45,40 @@ describe("troy api key auth", () => {
     expect(safeEqual("sk-troy-abc", "sk-troy-abd")).toBe(false);
     expect(safeEqual("sk-troy-abc", "sk-troy-ab")).toBe(false);
     expect(safeEqual("", "")).toBe(true);
+  });
+});
+
+describe("dashboard password", () => {
+  test("the default password is troy123", () => {
+    expect(DEFAULT_DASHBOARD_PASS).toBe("troy123");
+  });
+
+  test("hashPassword salts + hashes; verifyPassword accepts only the original", () => {
+    const { salt, hash } = hashPassword("troy123");
+    expect(hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(verifyPassword("troy123", salt, hash)).toBe(true);
+    expect(verifyPassword("troy124", salt, hash)).toBe(false);
+    expect(verifyPassword("troy12", salt, hash)).toBe(false);
+  });
+
+  test("the same password hashes differently with different salts", () => {
+    const a = hashPassword("troy123");
+    const b = hashPassword("troy123");
+    expect(a.salt).not.toBe(b.salt);
+    expect(a.hash).not.toBe(b.hash);
+    expect(verifyPassword("troy123", a.salt, a.hash)).toBe(true);
+    expect(verifyPassword("troy123", b.salt, b.hash)).toBe(true);
+  });
+
+  test("session tokens are opaque, unique, hex strings", () => {
+    expect(newSessionToken()).toMatch(/^[0-9a-f]{64}$/);
+    expect(newSessionToken()).not.toBe(newSessionToken());
+  });
+
+  test("putDashPass/getDashPass round-trips through kv", () => {
+    const store = new Store(":memory:");
+    expect(store.getDashPass()).toBeNull();
+    store.putDashPass({ salt: "s", hash: "h" });
+    expect(store.getDashPass()).toEqual({ salt: "s", hash: "h" });
   });
 });

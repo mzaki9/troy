@@ -40,6 +40,13 @@ export interface ApiAuth {
   on: number;
 }
 
+/** Stored dashboard password (salted SHA-256). Absent while the default password
+ * `troy123` is in effect. */
+export interface DashPass {
+  salt: string;
+  hash: string;
+}
+
 const DEFAULTS: Settings = {
   rtk_on: 1,
   caveman_level: "off",
@@ -286,6 +293,23 @@ export class Store {
         "INSERT INTO kv (scope, key, value) VALUES ('api', 'auth', ?) ON CONFLICT (scope, key) DO UPDATE SET value = excluded.value",
       )
       .run(JSON.stringify(a));
+  }
+
+  // ---- dashboard password ----
+
+  /** Stored password hash, or null while the default password is in effect. */
+  getDashPass(): DashPass | null {
+    const row = this.db.query("SELECT value FROM kv WHERE scope = 'dash' AND key = 'pass'").get();
+    if (!row) return null;
+    return JSON.parse((row as { value: string }).value) as DashPass;
+  }
+
+  putDashPass(p: DashPass) {
+    this.db
+      .query(
+        "INSERT INTO kv (scope, key, value) VALUES ('dash', 'pass', ?) ON CONFLICT (scope, key) DO UPDATE SET value = excluded.value",
+      )
+      .run(JSON.stringify(p));
   }
 
   // ---- custom providers ----

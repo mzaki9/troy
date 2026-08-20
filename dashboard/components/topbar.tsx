@@ -1,10 +1,10 @@
-import { Check, Copy, Moon, Sun } from "lucide-react";
+import { Check, Copy, Lock, Moon, Sun } from "lucide-react";
 import { useState } from "react";
 import { toggleDark, useDark } from "../dark";
 import { PAGES, type PageId } from "./sidebar";
 import { Button } from "./ui/button";
 
-export function Topbar({ page }: { page: PageId }) {
+export function Topbar({ page, onLogout }: { page: PageId; onLogout: () => void }) {
   const meta = PAGES.find((p) => p.id === page)!;
   const [copied, setCopied] = useState(false);
   const dark = useDark();
@@ -36,6 +36,9 @@ export function Topbar({ page }: { page: PageId }) {
           title={dark ? "switch to light mode" : "switch to dark mode"}
         >
           {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
+        </Button>
+        <Button variant="ghost" size="icon" onClick={onLogout} aria-label="lock dashboard" title="lock dashboard">
+          <Lock className="size-4" />
         </Button>
         <Button variant="ghost" size="icon" onClick={copy} aria-label="copy proxy url" title="copy proxy url">
           {copied ? <Check className="size-4 text-green-600 dark:text-green-400" /> : <Copy className="size-4" />}

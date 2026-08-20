@@ -1,7 +1,15 @@
 import { mkdirSync } from "node:fs";
 import type { Server } from "bun";
-import { extractApiKey, generateApiKey, safeEqual } from "./auth";
-import { type ApiAuth, Store } from "./db";
+import {
+  DEFAULT_DASHBOARD_PASS,
+  extractApiKey,
+  generateApiKey,
+  hashPassword,
+  newSessionToken,
+  safeEqual,
+  verifyPassword,
+} from "./auth";
+import { type ApiAuth, type DashPass, Store } from "./db";
 import { isReasoningModel } from "./reasoning";
 import {
   customProviderIds,
@@ -32,6 +40,58 @@ let apiAuth: ApiAuth = store.getApiAuth();
 if (!apiAuth.key) {
   apiAuth.key = generateApiKey();
   store.putApiAuth(apiAuth);
+}
+
+// ---- dashboard password gate ----
+// Default "troy123" until the user replaces it in Settings → Dashboard
+// password. Every /api/* route (except session/login/logout) requires a
+// logged-in browser session; the /v1 proxy keeps its own api key.
+let dashPass: DashPass | null = store.getDashPass();
+
+function checkDashboardPassword(pw: unknown): boolean {
+  if (typeof pw !== "string" || !pw) return false;
+  return dashPass ? verifyPassword(pw, dashPass.salt, dashPass.hash) : safeEqual(pw, DEFAULT_DASHBOARD_PASS);
+}
+
+const SESSION_COOKIE = "troy_session";
+const SESSION_TTL_MS = 30 * 24 * 3600 * 1000;
+/** in-memory sessions: token → expiry. Single-process dashboard, so memory is fine. */
+const sessions = new Map<string, number>();
+// sweep expired sessions hourly
+setInterval(() => {
+  const now = Date.now();
+  for (const [token, exp] of sessions) if (exp < now) sessions.delete(token);
+}, 3_600_000).unref();
+
+function readCookies(request: Request): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const part of (request.headers.get("cookie") ?? "").split(";")) {
+    const eq = part.indexOf("=");
+    if (eq <= 0) continue;
+    const key = part.slice(0, eq).trim();
+    try {
+      out[key] = decodeURIComponent(part.slice(eq + 1).trim());
+    } catch {
+      /* malformed cookie — skip */
+    }
+  }
+  return out;
+}
+
+function authed(request: Request): boolean {
+  const token = readCookies(request)[SESSION_COOKIE];
+  if (!token) return false;
+  const exp = sessions.get(token);
+  if (exp === undefined) return false;
+  if (exp < Date.now()) {
+    sessions.delete(token);
+    return false;
+  }
+  return true;
+}
+
+function setSessionCookie(token: string): string {
+  return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`;
 }
 
 function loadSettings() {
@@ -247,6 +307,43 @@ const server: Server<undefined> = Bun.serve({
 
     if (request.method === "OPTIONS") return cors(request);
 
+    // ---- dashboard password gate ----
+    if (path === "/api/session" && request.method === "GET") {
+      return json({ authed: authed(request), defaultPass: !dashPass });
+    }
+    if (path === "/api/login" && request.method === "POST") {
+      return readBody(request).then((b) => {
+        const body = b as { password?: string } | null;
+        if (!checkDashboardPassword(body?.password)) {
+          return json({ error: "wrong dashboard password" }, 401);
+        }
+        const token = newSessionToken();
+        sessions.set(token, Date.now() + SESSION_TTL_MS);
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "access-control-allow-origin": "*",
+            "set-cookie": setSessionCookie(token),
+          },
+        });
+      });
+    }
+    if (path === "/api/logout" && request.method === "POST") {
+      const token = readCookies(request)[SESSION_COOKIE];
+      if (token) sessions.delete(token);
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: {
+          "content-type": "application/json",
+          "access-control-allow-origin": "*",
+          "set-cookie": `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`,
+        },
+      });
+    }
+    if (path.startsWith("/api/") && !authed(request)) {
+      return json({ error: "login required" }, 401);
+    }
+
     // troy's own api key — every /v1 request must carry it while auth is on
     if (isV1Path(path, request.method) && apiAuth.on === 1) {
       const given = extractApiKey(request);
@@ -389,6 +486,22 @@ const server: Server<undefined> = Bun.serve({
       }
     }
 
+    if (path === "/api/password" && request.method === "POST") {
+      return readBody(request).then((b) => {
+        const body = b as { current?: string; next?: string } | null;
+        if (!checkDashboardPassword(body?.current)) {
+          return json({ error: "current password is wrong" }, 403);
+        }
+        const next = body?.next;
+        if (typeof next !== "string" || next.length < 4) {
+          return json({ error: "new password must be at least 4 characters" }, 400);
+        }
+        dashPass = hashPassword(next);
+        store.putDashPass(dashPass);
+        return json({ ok: true });
+      });
+    }
+
     if (path === "/api/combos") {
       if (request.method === "GET") return json(store.listCombos());
       if (request.method === "POST") {
@@ -499,3 +612,8 @@ const server: Server<undefined> = Bun.serve({
 });
 
 console.log(`troy → ${server.url}  proxy: ${server.url}v1  dashboard: ${server.url}`);
+if (!dashPass) {
+  console.log(
+    `  dashboard password: ${DEFAULT_DASHBOARD_PASS} (default — change it under Settings → Dashboard password)`,
+  );
+}
