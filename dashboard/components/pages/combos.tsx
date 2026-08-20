@@ -1,4 +1,4 @@
-import { ArrowRight, Brain, ChevronsUpDown, Plus, Trash2, X } from "lucide-react";
+import { ArrowRight, Brain, ChevronsUpDown, Pencil, Plus, Trash2, X } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
 import { useState } from "react";
 import { cn } from "../../lib/utils";
@@ -141,6 +141,7 @@ export function CombosPage() {
   const combos = useApi<Combo[]>("/api/combos");
   const desired = useApi<SavedModel[]>("/api/models");
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<Combo | null>(null);
   const [name, setName] = useState("");
   const [strategy, setStrategy] = useState("fallback");
   const [added, setAdded] = useState<string[]>([]);
@@ -162,6 +163,27 @@ export function CombosPage() {
     addModel(q.trim());
   };
 
+  const reset = () => {
+    setName("");
+    setStrategy("fallback");
+    setAdded([]);
+    setAdding(false);
+    setEditing(null);
+  };
+
+  const startAdd = () => {
+    reset();
+    setAdding(true);
+  };
+
+  const startEdit = (c: Combo) => {
+    reset();
+    setName(c.name);
+    setStrategy(c.strategy ?? "fallback");
+    setAdded([...c.models]);
+    setEditing(c);
+  };
+
   const add = async (e: FormEvent) => {
     e.preventDefault();
     if (!name.trim() || added.length === 0) return;
@@ -169,10 +191,7 @@ export function CombosPage() {
       method: "POST",
       body: JSON.stringify({ name: name.trim(), models: added, strategy }),
     });
-    setName("");
-    setStrategy("fallback");
-    setAdded([]);
-    setAdding(false);
+    reset();
     combos.refetch();
   };
 
@@ -213,24 +232,29 @@ export function CombosPage() {
                     ))}
                   </div>
                 </div>
-                <DeleteComboDialog name={c.name} onConfirm={() => remove(c)}>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label={`delete ${c.name}`}
-                    className="hover:text-destructive"
-                  >
-                    <Trash2 className="size-4" />
+                <div className="flex items-center gap-1">
+                  <Button variant="ghost" size="icon" aria-label={`edit ${c.name}`} onClick={() => startEdit(c)}>
+                    <Pencil className="size-4" />
                   </Button>
-                </DeleteComboDialog>
+                  <DeleteComboDialog name={c.name} onConfirm={() => remove(c)}>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`delete ${c.name}`}
+                      className="hover:text-destructive"
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
+                  </DeleteComboDialog>
+                </div>
               </div>
             ))}
           </div>
         )}
       </CardContent>
       <CardFooter className="flex-col items-stretch gap-3 border-t">
-        {!adding ? (
-          <Button variant="aloe" onClick={() => setAdding(true)}>
+        {!adding && !editing ? (
+          <Button variant="aloe" onClick={startAdd}>
             <Plus className="size-4" />
             new combo
           </Button>
@@ -238,7 +262,14 @@ export function CombosPage() {
           <form onSubmit={add} className="flex flex-wrap items-end gap-3">
             <div className="flex min-w-32 flex-1 flex-col gap-1.5">
               <Label htmlFor="comboName">name</Label>
-              <Input id="comboName" value={name} onChange={(e) => setName(e.target.value)} placeholder="primary" />
+              <Input
+                id="comboName"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="primary"
+                readOnly={!!editing}
+                disabled={!!editing}
+              />
             </div>
             <div className="flex min-w-48 flex-[2] flex-col gap-1.5">
               <Label>
@@ -305,9 +336,9 @@ export function CombosPage() {
               </Select>
             </div>
             <Button type="submit" disabled={!name.trim() || added.length === 0}>
-              save
+              {editing ? "save changes" : "save"}
             </Button>
-            <Button type="button" variant="ghost" onClick={() => setAdding(false)}>
+            <Button type="button" variant="ghost" onClick={reset}>
               cancel
             </Button>
           </form>
