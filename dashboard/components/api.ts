@@ -62,6 +62,9 @@ export interface StatsData {
     p95_ms: number;
     tokens_in: number;
     tokens_out: number;
+    rtk_saved?: number;
+    rtk_seen?: number;
+    rtk_hits?: number;
   };
   byProvider: { provider: string; n: number; ok: number; av: number; tokens_in?: number; tokens_out?: number }[];
   byModel: StatRow[];
@@ -80,6 +83,8 @@ export interface LogRow {
   status: string;
   latency_ms: number;
   tokens?: Record<string, number>;
+  rtk_saved?: number;
+  rtk_seen?: number;
 }
 export interface ProviderCat {
   id: string;

@@ -241,6 +241,15 @@ function RequestsTable({ rows, limit }: { rows?: LogRow[]; limit: number }) {
             </TableCell>
             <TableCell className="text-right font-mono text-xs tabular-nums text-muted-foreground">
               {r.tokens ? `${tok(r.tokens.prompt_tokens)} / ${tok(r.tokens.completion_tokens)}` : "—"}
+              {(r.rtk_saved ?? 0) > 0 && (
+                <Badge
+                  variant="secondary"
+                  className="ml-1.5 font-mono text-[10px]"
+                  title={`RTK compressed ~${(r.rtk_seen ?? 0).toLocaleString()} chars of tool output`}
+                >
+                  rtk −{Math.round((r.rtk_saved! / (r.rtk_seen || 1)) * 100)}%
+                </Badge>
+              )}
             </TableCell>
             <TableCell className="text-right font-mono tabular-nums">{r.latency_ms}</TableCell>
           </TableRow>
@@ -383,6 +392,21 @@ export function UsagePage() {
                     value={tok(tin + tout)}
                     sub={`↑ ${tok(tin)} in · ↓ ${tok(tout)} out`}
                     title={`${tin.toLocaleString()} in / ${tout.toLocaleString()} out`}
+                  />
+                );
+              })()}
+              {(() => {
+                const saved = t.rtk_saved ?? 0;
+                const seen = t.rtk_seen ?? 0;
+                if (seen <= 0) return null; // RTK off or nothing compressed — no zero-clutter card
+                const pct = Math.round((saved / seen) * 100);
+                const hit = t.requests ? Math.round(((t.rtk_hits ?? 0) / t.requests) * 100) : 0;
+                return (
+                  <StatCard
+                    label="RTK saved"
+                    value={`~${tok(Math.round(saved / 4))}`}
+                    sub={`${pct}% of tool output · ${hit}% of reqs`}
+                    title={`est. tokens — ${saved.toLocaleString()} of ${seen.toLocaleString()} chars compressed away`}
                   />
                 );
               })()}

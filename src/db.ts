@@ -73,7 +73,7 @@ const DEFAULTS: Settings = {
 
 export class Store {
   private db: Database;
-  private logQueue: [string, string, string, string | null, string, number, string][] = [];
+  private logQueue: [string, string, string, string | null, string, number, string, number, number][] = [];
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   private lastTrim = 0;
   private stateTrim = 0;
@@ -122,8 +122,7 @@ export class Store {
         status TEXT,
         latency_ms INTEGER,
         tokens TEXT DEFAULT '{}'
-      );
-      CREATE INDEX IF NOT EXISTS idx_conn_provider ON connections(provider, is_active, priority);
+      );      CREATE INDEX IF NOT EXISTS idx_conn_provider ON connections(provider, is_active, priority);
       CREATE INDEX IF NOT EXISTS idx_uh_ts ON usage_history(ts DESC);
       CREATE TABLE IF NOT EXISTS state_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -157,6 +156,12 @@ export class Store {
     const ccols = this.db.query("PRAGMA table_info(combos)").all() as { name: string }[];
     if (!ccols.some((c) => c.name === "strategy")) {
       this.db.run("ALTER TABLE combos ADD COLUMN strategy TEXT NOT NULL DEFAULT 'fallback'");
+    }
+    // RTK gain tracking columns on pre-existing databases
+    const ucols = this.db.query("PRAGMA table_info(usage_history)").all() as { name: string }[];
+    if (!ucols.some((c) => c.name === "rtk_saved")) {
+      this.db.run("ALTER TABLE usage_history ADD COLUMN rtk_saved INTEGER NOT NULL DEFAULT 0");
+      this.db.run("ALTER TABLE usage_history ADD COLUMN rtk_seen INTEGER NOT NULL DEFAULT 0");
     }
   }
 
@@ -382,8 +387,10 @@ export class Store {
     status: string;
     latency_ms: number;
     tokens?: Record<string, number>;
+    rtk_saved?: number;
+    rtk_seen?: number;
   }) {
-    const rec: [string, string, string, string | null, string, number, string] = [
+    const rec: [string, string, string, string | null, string, number, string, number, number] = [
       new Date().toISOString(),
       row.provider,
       row.model,
@@ -391,6 +398,8 @@ export class Store {
       row.status,
       row.latency_ms,
       JSON.stringify(row.tokens ?? {}),
+      row.rtk_saved ?? 0,
+      row.rtk_seen ?? 0,
     ];
     this.logQueue.push(rec);
   }
@@ -408,7 +417,7 @@ export class Store {
       for (const row of batch) {
         this.db
           .query(
-            "INSERT INTO usage_history (ts, provider, model, combo, status, latency_ms, tokens) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO usage_history (ts, provider, model, combo, status, latency_ms, tokens, rtk_saved, rtk_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
           )
           .run(...row);
       }

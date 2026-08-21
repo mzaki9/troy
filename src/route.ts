@@ -1,5 +1,5 @@
 import { commandCodeReply, wrapCommandCode } from "./commandcode";
-import { type Connection, type StateEvent, type Store } from "./db";
+import type { Connection, StateEvent, Store } from "./db";
 import { type CavemanLevel, injectCaveman, injectPonytail, type PonytailLevel } from "./inject";
 import { enrich } from "./modelsdev";
 import { isReasoningModel, resolveEffortAlias } from "./reasoning";
@@ -231,9 +231,14 @@ export class CooldownStore {
 
 type FailKind = "rate" | "quota" | "auth" | "short" | "transient";
 
-function classify(status: number, errText: string, backoffLevel = 0): { kind: FailKind; cooldownMs: number; newBackoffLevel: number } {
+function classify(
+  status: number,
+  errText: string,
+  backoffLevel = 0,
+): { kind: FailKind; cooldownMs: number; newBackoffLevel: number } {
   const lower = String(errText ?? "").toLowerCase();
-  if (/request not allowed/.test(lower)) return { kind: "short", cooldownMs: COOLDOWN_SHORT_MS, newBackoffLevel: backoffLevel };
+  if (/request not allowed/.test(lower))
+    return { kind: "short", cooldownMs: COOLDOWN_SHORT_MS, newBackoffLevel: backoffLevel };
   // quota/balance death: long lock, NO backoff escalation — retrying sooner never helps
   if (status === 402 || QUOTA_TEXT.some((r) => lower.includes(r)))
     return { kind: "quota", cooldownMs: COOLDOWN_LONG_MS, newBackoffLevel: backoffLevel };
@@ -285,6 +290,9 @@ export interface LogRow {
   status: string;
   latency_ms: number;
   tokens?: Record<string, number>;
+  /** RTK compressor: chars removed / chars that entered it (0 when off or no hit) */
+  rtk_saved?: number;
+  rtk_seen?: number;
 }
 
 export interface ChatDeps {
@@ -617,7 +625,13 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
     chain = [...chain.slice(start), ...chain.slice(0, start)];
   }
 
-  if (deps.rtkOn) compressMessages(body);
+  let rtkSaved = 0;
+  let rtkSeen = 0;
+  if (deps.rtkOn) {
+    const rtk = compressMessages(body);
+    rtkSaved = rtk.saved;
+    rtkSeen = rtk.seen;
+  }
   if (deps.cavemanLevel !== "off") injectCaveman(body, deps.cavemanLevel as CavemanLevel);
   if (deps.ponytailLevel !== "off") injectPonytail(body, deps.ponytailLevel as PonytailLevel);
 
@@ -742,7 +756,15 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
         if (res.ok) {
           if (cc) {
             deps.cooldowns.success(conn.id, model, circuitKey);
-            deps.onLog({ provider, model, combo: combo?.name, status: "200 OK", latency_ms: now() - t0 });
+            deps.onLog({
+              provider,
+              model,
+              combo: combo?.name,
+              status: "200 OK",
+              latency_ms: now() - t0,
+              rtk_saved: rtkSaved,
+              rtk_seen: rtkSeen,
+            });
             return commandCodeReply(res, stream, model, wrapped!.toolMap, deps.signal);
           }
           if (!stream) {
@@ -765,13 +787,22 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
               status: "200 OK",
               latency_ms: now() - t0,
               ...(tokens ? { tokens } : {}),
+              rtk_saved: rtkSaved,
+              rtk_seen: rtkSeen,
             });
             return passthrough(new Response(full.text!, { status: res.status, headers: res.headers }), false);
           }
           // streaming: guard the first chunk, tee usage off the wire, log at end
           const head = await takeHead(res, true);
           if (head.error) {
-            deps.cooldowns.fail(conn.id, model, 0, head.error, circuitKey, parseRetryAfter(res.headers.get("retry-after")));
+            deps.cooldowns.fail(
+              conn.id,
+              model,
+              0,
+              head.error,
+              circuitKey,
+              parseRetryAfter(res.headers.get("retry-after")),
+            );
             lastError = head.error;
             lastStatus = 502;
             excluded.add(conn.id);
@@ -791,6 +822,8 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
               status: "200 OK",
               latency_ms: now() - t0,
               ...(tokens ? { tokens } : {}),
+              rtk_saved: rtkSaved,
+              rtk_seen: rtkSeen,
             }),
           );
           return passthrough(new Response(logged, { status: 200, headers: res.headers }), true);
@@ -798,7 +831,14 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
 
         const bodyText = await res.text().catch(() => "");
         if (cc) lastRaw = { body: bodyText, status: res.status };
-        deps.cooldowns.fail(conn.id, model, res.status, bodyText, circuitKey, parseRetryAfter(res.headers.get("retry-after")));
+        deps.cooldowns.fail(
+          conn.id,
+          model,
+          res.status,
+          bodyText,
+          circuitKey,
+          parseRetryAfter(res.headers.get("retry-after")),
+        );
         lastError = bodyText || res.statusText || `HTTP ${res.status}`;
         lastStatus = res.status;
         excluded.add(conn.id);
@@ -814,6 +854,8 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
     combo: combo?.name,
     status: `${lastStatus}`,
     latency_ms: now() - t0,
+    rtk_saved: rtkSaved,
+    rtk_seen: rtkSeen,
   });
   const retryAfter = deps.cooldowns.earliestRetryAfter();
   const headers: Record<string, string> = { "content-type": "application/json", "access-control-allow-origin": "*" };

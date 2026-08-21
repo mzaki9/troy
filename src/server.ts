@@ -183,6 +183,9 @@ interface StatRow {
   last: string;
   tin: number | null;
   tout: number | null;
+  rsav: number | null;
+  rseen: number | null;
+  rhits: number | null;
 }
 
 const STATUS_OK = "200 OK";
@@ -190,7 +193,7 @@ const STATUS_OK = "200 OK";
 function stats(): unknown {
   const byModel = store.raw
     .query(
-      "SELECT provider, model, COUNT(*) n, SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) ok, AVG(latency_ms) av, MAX(ts) last, SUM(json_extract(tokens, '$.prompt_tokens')) tin, SUM(json_extract(tokens, '$.completion_tokens')) tout FROM usage_history GROUP BY model, provider ORDER BY n DESC LIMIT 500",
+      "SELECT provider, model, COUNT(*) n, SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) ok, AVG(latency_ms) av, MAX(ts) last, SUM(json_extract(tokens, '$.prompt_tokens')) tin, SUM(json_extract(tokens, '$.completion_tokens')) tout, SUM(rtk_saved) rsav, SUM(rtk_seen) rseen, SUM(CASE WHEN rtk_saved > 0 THEN 1 ELSE 0 END) rhits FROM usage_history GROUP BY model, provider ORDER BY n DESC LIMIT 500",
     )
     .all(STATUS_OK) as unknown as StatRow[];
   const lats = (
@@ -205,6 +208,9 @@ function stats(): unknown {
   let w = 0;
   let tin = 0;
   let tout = 0;
+  let rsav = 0;
+  let rseen = 0;
+  let rhits = 0;
   const prov = new Map<string, { n: number; ok: number; w: number; tin: number; tout: number }>();
   for (const r of byModel) {
     n += r.n;
@@ -212,6 +218,9 @@ function stats(): unknown {
     w += r.n * r.av;
     tin += r.tin ?? 0;
     tout += r.tout ?? 0;
+    rsav += r.rsav ?? 0;
+    rseen += r.rseen ?? 0;
+    rhits += r.rhits ?? 0;
     const p = prov.get(r.provider) ?? { n: 0, ok: 0, w: 0, tin: 0, tout: 0 };
     p.n += r.n;
     p.ok += r.ok;
@@ -239,6 +248,9 @@ function stats(): unknown {
       p95_ms: Math.round(p95),
       tokens_in: tin,
       tokens_out: tout,
+      rtk_saved: rsav,
+      rtk_seen: rseen,
+      rtk_hits: rhits,
     },
     byProvider,
     byModel: byModel.map((r) => ({

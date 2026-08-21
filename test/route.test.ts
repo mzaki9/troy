@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { Store } from "../src/db";
 import type { StateEvent } from "../src/db";
+import { Store } from "../src/db";
 import { registerCustomProvider, unregisterCustomProvider } from "../src/registry";
 import { type ChatDeps, CooldownStore, handleChat, type LogRow, parseRetryAfter, takeHead } from "../src/route";
 
@@ -684,7 +684,15 @@ describe("capability preflight", () => {
     const res = await handleChat(
       {
         model: "openai/gpt-3.5-turbo",
-        messages: [{ role: "user", content: [{ type: "text", text: "look" }, { type: "image_url", image_url: { url: "data:image/png;base64,x" } }] }],
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "look" },
+              { type: "image_url", image_url: { url: "data:image/png;base64,x" } },
+            ],
+          },
+        ],
       },
       ctx.deps,
     );

@@ -282,43 +282,58 @@ function safeApply(fn: (t: string) => string, text: string): string {
   }
 }
 
-export function compressText(text: string): string {
+/** chars removed / chars that entered the compressor — the gain ratio's two halves */
+export interface RtkStat {
+  saved: number;
+  seen: number;
+}
+
+export function compressText(text: string, stat?: RtkStat): string {
   const bytesIn = text.length;
   if (bytesIn < MIN_COMPRESS_SIZE || bytesIn > RAW_CAP) return text;
   const fn = autoDetectFilter(text);
   if (!fn) return text;
+  // counted as seen even when the filter fails to shrink — the ratio stays honest
+  if (stat) stat.seen += bytesIn;
   const out = safeApply(fn, text);
-  return out.length >= bytesIn ? text : out;
+  if (out.length >= bytesIn) return text;
+  if (stat) stat.saved += bytesIn - out.length;
+  return out;
 }
 
-function compressBlock(text: string | { type: string; text: string }[]): string | { type: string; text: string }[] {
-  if (typeof text === "string") return compressText(text);
+function compressBlock(
+  text: string | { type: string; text: string }[],
+  stat?: RtkStat,
+): string | { type: string; text: string }[] {
+  if (typeof text === "string") return compressText(text, stat);
   if (Array.isArray(text)) {
-    return text.map((b) => (b.type === "text" ? { ...b, text: compressText(b.text) } : b));
+    return text.map((b) => (b.type === "text" ? { ...b, text: compressText(b.text, stat) } : b));
   }
   return text;
 }
 
-/** Compress tool-result content blocks. OpenAI `messages[]` and Claude `tool_result` blocks. */
-export function compressMessages(body: unknown): unknown {
+/** Compress tool-result content blocks. OpenAI `messages[]` and Claude `tool_result` blocks.
+ *  Returns how many chars were saved and how many passed through the compressor. */
+export function compressMessages(body: unknown): RtkStat {
+  const stat: RtkStat = { saved: 0, seen: 0 };
   const b = body as { messages?: unknown[] };
-  if (!Array.isArray(b.messages)) return body;
+  if (!Array.isArray(b.messages)) return stat;
   for (const msg of b.messages) {
     const m = msg as Record<string, unknown>;
     if (m.role === "tool") {
       if (typeof m.content === "string") {
-        m.content = compressText(m.content);
+        m.content = compressText(m.content, stat);
       } else if (Array.isArray(m.content)) {
-        m.content = compressBlock(m.content as { type: string; text: string }[]);
+        m.content = compressBlock(m.content as { type: string; text: string }[], stat);
       }
     } else if (Array.isArray(m.content)) {
       m.content = (m.content as { type?: string; text?: unknown; is_error?: boolean }[]).map((block) => {
         if (block?.type === "tool_result" && !block.is_error && typeof block.text === "string") {
-          return { ...block, text: compressText(block.text) };
+          return { ...block, text: compressText(block.text, stat) };
         }
         return block;
       });
     }
   }
-  return body;
+  return stat;
 }
