@@ -11,7 +11,7 @@ import {
   verifyPassword,
 } from "./auth";
 import { type ApiAuth, type DashPass, Store } from "./db";
-import { enrich, startModelsDevRefresh } from "./modelsdev";
+import { enrich, enrichCombo, enrichmentStatus, startModelsDevRefresh } from "./modelsdev";
 import { installOpenCodePlugin } from "./opencode-plugin";
 import {
   customProviderIds,
@@ -138,9 +138,18 @@ function buildDeps(request: Request): ChatDeps {
 function modelsList(): unknown[] {
   const out: unknown[] = [];
   for (const combo of store.listCombos()) {
-    // a combo thinks only when every member does (lowest common capability)
-    const reasoning = combo.models.length > 0 && combo.models.every((s) => enrich(s).reasoning);
-    out.push({ id: combo.name, object: "model", owned_by: "troy", reasoning });
+    // a chain is only as capable as its weakest member
+    const e = enrichCombo(combo.models);
+    out.push({
+      id: combo.name,
+      object: "model",
+      owned_by: "troy",
+      reasoning: e?.reasoning ?? false,
+      tool_call: e?.toolCall ?? true,
+      attachment: e?.attachment ?? true,
+      ...(e?.modalities ? { modalities: e.modalities } : {}),
+      ...(e?.limit ? { limit: e.limit } : {}),
+    });
   }
   for (const m of store.listModels()) {
     const e = enrich(m.spec);
@@ -152,6 +161,8 @@ function modelsList(): unknown[] {
       reasoning: e.reasoning,
       tool_call: e.toolCall,
       attachment: e.attachment,
+      ...(e.modalities ? { modalities: e.modalities } : {}),
+      ...(e.limit ? { limit: e.limit } : {}),
       ...(e.name ? { name: e.name } : {}),
     });
   }
@@ -550,6 +561,10 @@ const server: Server<undefined> = Bun.serve({
     if (path.startsWith("/api/models/") && request.method === "DELETE") {
       store.deleteModel(decodeURIComponent(path.slice("/api/models/".length)));
       return json({ ok: true });
+    }
+
+    if (path === "/api/modelsdev/status" && request.method === "GET") {
+      return json(enrichmentStatus());
     }
 
     if (path === "/api/settings") {

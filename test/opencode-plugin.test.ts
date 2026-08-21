@@ -67,7 +67,8 @@ describe("rendered plugin behavior", () => {
         custom: true,
         reasoning: true,
         name: "GPT-4o", // models.dev display name
-        attachment: false, // text-only canonical
+        modalities: ["text", "image", "pdf"], // full input modalities from troy
+        limit: { context: 400000, output: 128000 }, // real limits from troy
         tool_call: true,
       }, // chosen — keep
       { id: "openai", object: "model", owned_by: "openai" }, // bare provider row — drop
@@ -110,8 +111,8 @@ describe("rendered plugin behavior", () => {
     const gpt: Record<string, any> = {};
     byId.get("openai/gpt-4o")!.apply(gpt);
     expect(gpt.name).toBe("GPT-4o"); // served display name wins over the raw id
-    expect(gpt.limit).toEqual({ context: 200000, output: 32768 });
-    expect(gpt.capabilities).toEqual({ tools: true, input: ["text"], output: ["text"] }); // attachment:false honored
+    expect(gpt.limit).toEqual({ context: 400000, output: 128000 }); // served real limits win
+    expect(gpt.capabilities).toEqual({ tools: true, input: ["text", "image", "pdf"], output: ["text"] });
     expect(gpt.variants).toEqual([
       { id: "low", settings: { reasoningEffort: "low" } },
       { id: "medium", settings: { reasoningEffort: "medium" } },
@@ -120,6 +121,7 @@ describe("rendered plugin behavior", () => {
     const combo: Record<string, any> = {};
     byId.get("fast-coding")!.apply(combo);
     expect(combo.name).toBe("fast-coding"); // no served name → id
+    expect(combo.limit).toEqual({ context: 200000, output: 32768 }); // fallback when unserved
     expect(combo.capabilities).toBeUndefined(); // no served flags → Info defaults stand
     expect(combo.variants).toBeUndefined();
     cleanup();

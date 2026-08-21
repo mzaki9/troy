@@ -66,10 +66,14 @@ export default {
         for (const m of models) {
           catalog.model.update("troy", m.id, (draft) => {
             draft.name = m.name || m.id;
-            // display-only fallback — troy is a passthrough, upstream enforces real limits
-            draft.limit = { context: 200000, output: 32768 };
-            // real capability flags when troy serves them (models.dev enrichment)
-            if (m.tool_call === false || m.attachment === false) {
+            // real context window when troy serves one (models.dev); fallback is display-only —
+            // troy is a passthrough, upstream enforces the real limits
+            draft.limit = m.limit || { context: 200000, output: 32768 };
+            if (m.modalities) {
+              // full input modalities from troy ("text","image","video","pdf")
+              draft.capabilities = { tools: m.tool_call !== false, input: m.modalities, output: ["text"] };
+            } else if (m.tool_call === false || m.attachment === false) {
+              // binary fallback when only the attachment flag is known
               draft.capabilities = {
                 tools: m.tool_call !== false,
                 input: m.attachment === false ? ["text"] : ["text", "image"],
