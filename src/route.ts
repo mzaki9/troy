@@ -301,10 +301,15 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
   let lastError: string | null = null;
   let lastStatus = 502;
   let lastRaw: { body: string; status: number } | null = null;
+  // last member attempted — failure logs name it instead of a blanket "unknown"
+  let lastProvider = "unknown";
+  let lastModel = String(body.model);
 
   for (const spec of chain) {
     const { provider, model: rawModel } = parseModelStr(spec);
     const { model, effort } = resolveEffortAlias(rawModel);
+    lastProvider = provider;
+    lastModel = model;
     const def = getProvider(provider);
     if (!def) {
       lastError = `Unknown provider: ${provider}`;
@@ -395,8 +400,8 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
   }
 
   deps.onLog({
-    provider: "unknown",
-    model: String(body.model),
+    provider: lastProvider,
+    model: lastModel,
     combo: combo?.name,
     status: `${lastStatus}`,
     latency_ms: now() - t0,

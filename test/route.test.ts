@@ -79,6 +79,9 @@ describe("multi-account rotation", () => {
     const res = await handleChat({ model: "openai/gpt-4o", message: "hi" }, ctx.deps);
     expect(res.status).toBe(503);
     expect(res.headers.get("retry-after")).not.toBeNull();
+    // failure log names the attempted member, not a blanket "unknown"
+    expect(ctx.logs[0].provider).toBe("openai");
+    expect(ctx.logs[0].model).toBe("gpt-4o");
   });
 
   test("4xx marks account unavailable → 503 with Retry-After", async () => {
@@ -203,6 +206,19 @@ describe("errors", () => {
     const ctx = makeDeps();
     const res = await handleChat({ model: "nope/x", message: "hi" }, ctx.deps);
     expect(res.status).toBe(404);
+    expect(ctx.logs[0].provider).toBe("nope");
+  });
+  test("combo all-fail logs the last attempted member", async () => {
+    behaviors.set("bad", { status: 500, body: "boom" });
+    const ctx = makeDeps();
+    ctx.store.putCombo("f", ["openai/gpt-4o", "deepseek/deepseek-chat"]);
+    addConn(ctx, "openai", "bad");
+    addConn(ctx, "deepseek", "bad");
+    const res = await handleChat({ model: "f", message: "hi" }, ctx.deps);
+    expect(res.status).toBe(503);
+    expect(ctx.logs[0].provider).toBe("deepseek");
+    expect(ctx.logs[0].model).toBe("deepseek-chat");
+    expect(ctx.logs[0].combo).toBe("f");
   });
   test("missing model → 400", async () => {
     const ctx = makeDeps();
