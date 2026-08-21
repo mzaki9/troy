@@ -30,7 +30,8 @@ const DATA_DIR = process.env.TROY_DATA ?? "data";
 mkdirSync(DATA_DIR, { recursive: true });
 const store = new Store(`${DATA_DIR}/troy.db`);
 store.startLogFlush(2000);
-const cooldowns = new CooldownStore();
+// fold the durable state_events log back into live cooldowns/breakers (restart recovery)
+const cooldowns = CooldownStore.replay(store.foldStateEvents(), { append: (e) => store.appendStateEvent(e) });
 
 // load user-defined providers into the registry
 for (const p of store.listCustomProviders()) {

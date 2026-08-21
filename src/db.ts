@@ -49,6 +49,21 @@ export interface DashPass {
   hash: string;
 }
 
+/** One durable cooldown/circuit transition, appended BEFORE the in-memory state
+ *  changes so a restart can fold the log back into live breakers (event-sourcing
+ *  pattern borrowed from deepseek-harness's schedule package). */
+export interface StateEvent {
+  ts: number;
+  kind: "fail" | "success" | "circuit_open";
+  conn_id: string;
+  key?: string | null;
+  circuit_key?: string | null;
+  status?: number | null;
+  reason?: string | null;
+  until_ms?: number | null;
+  backoff_level?: number | null;
+}
+
 const DEFAULTS: Settings = {
   rtk_on: 1,
   caveman_level: "off",
@@ -61,6 +76,7 @@ export class Store {
   private logQueue: [string, string, string, string | null, string, number, string][] = [];
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   private lastTrim = 0;
+  private stateTrim = 0;
 
   constructor(path: string) {
     this.db = new Database(path);
@@ -109,6 +125,19 @@ export class Store {
       );
       CREATE INDEX IF NOT EXISTS idx_conn_provider ON connections(provider, is_active, priority);
       CREATE INDEX IF NOT EXISTS idx_uh_ts ON usage_history(ts DESC);
+      CREATE TABLE IF NOT EXISTS state_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        conn_id TEXT NOT NULL,
+        key TEXT,
+        circuit_key TEXT,
+        status INTEGER,
+        reason TEXT,
+        until_ms INTEGER,
+        backoff_level INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_state_events_ts ON state_events(ts);
     `);
     // migrate old provider ids → canonical names
     this.db.run("UPDATE connections SET provider = 'alibaba' WHERE provider = 'alims-intl';");
@@ -405,6 +434,38 @@ export class Store {
         return { ...r, tokens: undefined };
       }
     });
+  }
+
+  /** Durable cooldown/circuit event — called before the in-memory mutation. */
+  appendStateEvent(e: StateEvent): void {
+    this.db
+      .query(
+        "INSERT INTO state_events (ts, kind, conn_id, key, circuit_key, status, reason, until_ms, backoff_level) VALUES (?,?,?,?,?,?,?,?,?)",
+      )
+      .run(
+        e.ts,
+        e.kind,
+        e.conn_id,
+        e.key ?? null,
+        e.circuit_key ?? null,
+        e.status ?? null,
+        e.reason ?? null,
+        e.until_ms ?? null,
+        e.backoff_level ?? null,
+      );
+    // bound the log — cooldowns older than a day are worthless on replay
+    if (!this.stateTrim || Date.now() - this.stateTrim > 3600_000) {
+      this.stateTrim = Date.now();
+      this.pruneStateEvents(86400_000);
+    }
+  }
+
+  foldStateEvents(): StateEvent[] {
+    return this.db.query("SELECT * FROM state_events ORDER BY id ASC").all() as StateEvent[];
+  }
+
+  pruneStateEvents(maxAgeMs: number): void {
+    this.db.query("DELETE FROM state_events WHERE ts < ?").run(Date.now() - maxAgeMs);
   }
 
   /**

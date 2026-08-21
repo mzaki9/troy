@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Store } from "../src/db";
+import type { StateEvent } from "../src/db";
 import { registerCustomProvider, unregisterCustomProvider } from "../src/registry";
-import { type ChatDeps, CooldownStore, handleChat, type LogRow, takeHead } from "../src/route";
+import { type ChatDeps, CooldownStore, handleChat, type LogRow, parseRetryAfter, takeHead } from "../src/route";
 
 interface StubBehavior {
   status: number;
@@ -48,7 +49,10 @@ const stub = Bun.serve({
     if (b?.headers?.["content-type"] === "text/event-stream") {
       return new Response(b.body, { status: b.status, headers: { "content-type": "text/event-stream" } });
     }
-    return new Response(b?.body ?? "{}", { status: b?.status ?? 200, headers: { "content-type": "application/json" } });
+    return new Response(b?.body ?? "{}", {
+      status: b?.status ?? 200,
+      headers: { "content-type": "application/json", ...(b?.headers ?? {}) },
+    });
   },
 });
 
@@ -590,5 +594,116 @@ describe("statsDaily (7d chart feed)", () => {
     expect(counts(res.days[0])).toEqual({ "llama-3.3": 1 });
     const total = res.days.reduce((s, d) => s + d.models.reduce((x, m) => x + m.requests, 0), 0);
     expect(total).toBe(5);
+  });
+});
+
+describe("cooldown management (dsh-derived)", () => {
+  test("parseRetryAfter: seconds, HTTP-date, garbage", () => {
+    expect(parseRetryAfter("5")).toBe(5000);
+    const future = new Date(Date.now() + 60_000).toUTCString();
+    const v = parseRetryAfter(future)!;
+    expect(v).toBeGreaterThan(50_000);
+    expect(v).toBeLessThanOrEqual(60_000);
+    expect(parseRetryAfter(null)).toBeNull();
+    expect(parseRetryAfter("soon")).toBeNull();
+  });
+
+  test("quota death locks long without backoff escalation", () => {
+    const cd = new CooldownStore();
+    cd.fail("c1", "m", 402, "insufficient balance");
+    expect(cd.backoffLevel("c1")).toBe(0); // no escalation — retrying sooner never helps
+    const lock = cd.lockExpiry("c1", "m") - Date.now();
+    expect(lock).toBeGreaterThan(100_000); // ~120s, not the 2s backoff base
+  });
+
+  test("rate limit escalates backoff with ±10% jitter", () => {
+    for (let i = 0; i < 20; i++) {
+      const cd = new CooldownStore();
+      cd.fail("c1", "m", 429, "rate limit exceeded");
+      expect(cd.backoffLevel("c1")).toBe(1);
+      const lock = cd.lockExpiry("c1", "m") - Date.now();
+      expect(lock).toBeGreaterThanOrEqual(1800);
+      expect(lock).toBeLessThanOrEqual(2200);
+    }
+  });
+
+  test("upstream Retry-After header wins over local backoff", async () => {
+    behaviors.set("ra", { status: 429, headers: { "retry-after": "1" }, body: "{}" });
+    const ctx = makeDeps();
+    addConn(ctx, "openai", "ra");
+    await handleChat({ model: "openai/gpt-4o", message: "hi" }, ctx.deps);
+    const id = ctx.store.listConnections("openai")[0].id;
+    const lock = ctx.cd.lockExpiry(id, "gpt-4o") - Date.now();
+    expect(lock).toBeGreaterThan(0);
+    expect(lock).toBeLessThanOrEqual(1100); // honored verbatim, not the 2s backoff base
+  });
+
+  test("replay folds the event log back into live state", () => {
+    const events: StateEvent[] = [];
+    const cd = new CooldownStore({ append: (e) => events.push(e) });
+    cd.fail("c1", "m1", 429, "rate limit exceeded");
+    cd.success("c1", "m1");
+    cd.fail("c2", "m2", 402, "insufficient balance");
+    for (let i = 0; i < 3; i++) cd.fail("c3", "m3", 500, "boom", "prov/m3"); // opens circuit
+
+    const cd2 = CooldownStore.replay(events);
+    expect(cd2.isEligible("c1", "m1")).toBe(true); // success cleared it
+    expect(cd2.isEligible("c2", "m2")).toBe(false);
+    expect(cd2.lockExpiry("c2", "m2")).toBe(cd.lockExpiry("c2", "m2")); // exact until_ms restored
+    expect(cd2.isOpen("prov/m3")).toBe(true);
+
+    // expired entries are dropped on fold
+    const cd3 = CooldownStore.replay([
+      { ts: Date.now(), kind: "fail", conn_id: "c4", key: "m4", until_ms: Date.now() - 1000, backoff_level: 2 },
+    ]);
+    expect(cd3.isEligible("c4", "m4")).toBe(true);
+  });
+});
+
+describe("capability preflight", () => {
+  test("tools request skips members known to lack tool_call", async () => {
+    behaviors.set("good", { status: 200, body: JSON.stringify({ ok: true }) });
+    const ctx = makeDeps();
+    addConn(ctx, "openai", "good");
+    const res = await handleChat(
+      {
+        model: "openai/gpt-3.5-turbo",
+        messages: [{ role: "user", content: "hi" }],
+        tools: [{ type: "function", function: { name: "f", parameters: {} } }],
+      },
+      ctx.deps,
+    );
+    expect(res.status).toBe(503);
+    expect(await res.text()).toContain("preflight: no tools");
+  });
+
+  test("image input skips text-only members", async () => {
+    behaviors.set("good", { status: 200, body: JSON.stringify({ ok: true }) });
+    const ctx = makeDeps();
+    addConn(ctx, "openai", "good");
+    const res = await handleChat(
+      {
+        model: "openai/gpt-3.5-turbo",
+        messages: [{ role: "user", content: [{ type: "text", text: "look" }, { type: "image_url", image_url: { url: "data:image/png;base64,x" } }] }],
+      },
+      ctx.deps,
+    );
+    expect(res.status).toBe(503);
+    expect(await res.text()).toContain("preflight: no vision");
+  });
+
+  test("unknown models stay eligible (regex floor defaults)", async () => {
+    behaviors.set("good", { status: 200, body: JSON.stringify({ ok: true }) });
+    const ctx = makeDeps();
+    addConn(ctx, "openai", "good");
+    const res = await handleChat(
+      {
+        model: "openai/gpt-4o",
+        messages: [{ role: "user", content: "hi" }],
+        tools: [{ type: "function", function: { name: "f", parameters: {} } }],
+      },
+      ctx.deps,
+    );
+    expect(res.status).toBe(200);
   });
 });

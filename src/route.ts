@@ -1,11 +1,14 @@
 import { commandCodeReply, wrapCommandCode } from "./commandcode";
-import type { Connection, Store } from "./db";
+import { type Connection, type StateEvent, type Store } from "./db";
 import { type CavemanLevel, injectCaveman, injectPonytail, type PonytailLevel } from "./inject";
+import { enrich } from "./modelsdev";
 import { isReasoningModel, resolveEffortAlias } from "./reasoning";
 import { getProvider, inferProvider, type Provider } from "./registry";
 import { compressMessages } from "./rtk";
 
 const BACKOFF_CONFIG = { base: 2000, max: 300000, maxLevel: 15 };
+/** symmetric ±10% jitter on backoff — synchronized expiries across accounts herd otherwise */
+const BACKOFF_JITTER = 0.1;
 const TRANSIENT_COOLDOWN_MS = 30000;
 const COOLDOWN_LONG_MS = 120000;
 const COOLDOWN_SHORT_MS = 5000;
@@ -15,9 +18,26 @@ const STICKY_ROUND_ROBIN_LIMIT = 3;
 const CIRCUIT_WINDOW_MS = 60000;
 const CIRCUIT_THRESHOLD = 3;
 const CIRCUIT_OPEN_MS = 30000;
+/** upstream streams silent longer than this are cut with an SSE error frame */
+const STREAM_IDLE_TIMEOUT_MS = Math.max(1000, Number(process.env.TROY_STREAM_IDLE_MS ?? 300_000));
+/** per-account in-flight cap — one hot account may not eat all parallelism */
+const MAX_INFLIGHT_PER_CONN = Math.max(1, Number(process.env.TROY_MAX_INFLIGHT ?? 10));
+const inflight = new Map<string, number>();
 const COMBO_STRATEGIES = new Set(["fallback", "random", "round-robin"]);
 
-const ERROR_TEXT_BACKOFF = ["rate limit", "too many requests", "quota exceeded", "capacity", "overloaded"];
+const ERROR_TEXT_BACKOFF = ["rate limit", "too many requests", "capacity", "overloaded"];
+
+/** Balance/quota exhaustion — a dead account does not recover by retrying, so it
+ *  gets one long lock instead of an escalating backoff ladder (dsh QUOTA split). */
+const QUOTA_TEXT = [
+  "insufficient balance",
+  "insufficient credits",
+  "insufficient quota",
+  "quota exceeded",
+  "out of budget",
+  "exceeded your current quota",
+  "billing",
+];
 
 const now = () => Date.now();
 
@@ -25,6 +45,12 @@ interface CooldownState {
   until: number;
   backoff: number;
   locks: Map<string, number>;
+}
+
+/** Durable sink for cooldown/circuit transitions — troy wires this to the
+ *  SQLite `state_events` log so breakers survive restarts. */
+export interface CooldownSink {
+  append(e: StateEvent): void;
 }
 
 export class CooldownStore {
@@ -36,6 +62,42 @@ export class CooldownStore {
   private circuits = new Map<string, { fails: number[]; openUntil: number }>();
   /** per-combo round-robin start index (chain-level rotation) */
   private rrChain = new Map<string, number>();
+
+  constructor(private readonly sink?: CooldownSink) {}
+
+  /** Rebuild in-memory state from the durable event log (boot recovery).
+   *  Expired entries are dropped; the newest fail per key wins via max(). */
+  static replay(events: StateEvent[], sink?: CooldownSink): CooldownStore {
+    const st = new CooldownStore(sink);
+    for (const e of events) {
+      if (e.kind === "circuit_open") {
+        if (!e.circuit_key || e.until_ms === null || e.until_ms === undefined || e.until_ms <= now()) continue;
+        st.circuits.set(e.circuit_key, { fails: [], openUntil: e.until_ms });
+        continue;
+      }
+      if (e.kind === "success") {
+        st.success(e.conn_id, e.key ?? "*", e.circuit_key ?? undefined);
+        continue;
+      }
+      // fail
+      if (!e.until_ms || e.until_ms <= now()) continue;
+      const s = st.ensure(e.conn_id);
+      s.until = Math.max(s.until, e.until_ms);
+      s.backoff = Math.max(s.backoff, e.backoff_level ?? 0);
+      const lockKey = e.key ?? "*";
+      s.locks.set(lockKey, Math.max(s.locks.get(lockKey) ?? 0, e.until_ms));
+      if (e.reason && e.key) st.reasons.set(`${e.conn_id}|${e.key}`, e.reason);
+    }
+    return st;
+  }
+
+  private persist(e: StateEvent) {
+    try {
+      this.sink?.append(e);
+    } catch {
+      /* durability must never break routing */
+    }
+  }
 
   /** next start index for a round-robin combo chain */
   nextChainStart(name: string): number {
@@ -72,12 +134,28 @@ export class CooldownStore {
     return this.lockExpiry(id, key) <= now();
   }
 
-  fail(id: string, key: string, status: number, errText: string, circuitKey = key) {
+  fail(id: string, key: string, status: number, errText: string, circuitKey = key, retryAfterMs?: number | null) {
     const s = this.ensure(id);
-    const { cooldownMs, newBackoffLevel } = classify(status, errText, s.backoff);
-    s.until = now() + cooldownMs;
-    s.backoff = newBackoffLevel;
-    s.locks.set(key, now() + cooldownMs);
+    const cls = classify(status, errText, s.backoff);
+    // server Retry-After wins over local backoff when sane (dsh llm-retry rule)
+    const cooldownMs =
+      retryAfterMs != null && retryAfterMs > 0 && retryAfterMs <= BACKOFF_CONFIG.max ? retryAfterMs : cls.cooldownMs;
+    const until = now() + cooldownMs;
+    // write-ahead: durable before memory so a restart folds this back
+    this.persist({
+      ts: now(),
+      kind: "fail",
+      conn_id: id,
+      key,
+      circuit_key: circuitKey,
+      status,
+      reason: extractReason(errText),
+      until_ms: until,
+      backoff_level: cls.newBackoffLevel,
+    });
+    s.until = until;
+    s.backoff = cls.newBackoffLevel;
+    s.locks.set(key, until);
     const reason = extractReason(errText);
     if (reason) this.reasons.set(`${id}|${key}`, reason);
     this.countFailure(circuitKey);
@@ -86,6 +164,7 @@ export class CooldownStore {
   success(id: string, key: string, circuitKey = key) {
     const s = this.states.get(id);
     if (!s) return;
+    this.persist({ ts: now(), kind: "success", conn_id: id, key, circuit_key: circuitKey });
     s.locks.delete(key);
     s.until = 0;
     for (const [k, v] of s.locks) {
@@ -103,7 +182,10 @@ export class CooldownStore {
     const c = this.circuits.get(key) ?? { fails: [], openUntil: 0 };
     c.fails = c.fails.filter((t) => t > now() - CIRCUIT_WINDOW_MS);
     c.fails.push(now());
-    if (c.fails.length >= CIRCUIT_THRESHOLD) c.openUntil = now() + CIRCUIT_OPEN_MS;
+    if (c.fails.length >= CIRCUIT_THRESHOLD) {
+      c.openUntil = now() + CIRCUIT_OPEN_MS;
+      this.persist({ ts: now(), kind: "circuit_open", conn_id: "", circuit_key: key, until_ms: c.openUntil });
+    }
     this.circuits.set(key, c);
   }
 
@@ -147,22 +229,39 @@ export class CooldownStore {
   }
 }
 
-function classify(status: number, errText: string, backoffLevel = 0): { cooldownMs: number; newBackoffLevel: number } {
+type FailKind = "rate" | "quota" | "auth" | "short" | "transient";
+
+function classify(status: number, errText: string, backoffLevel = 0): { kind: FailKind; cooldownMs: number; newBackoffLevel: number } {
   const lower = String(errText ?? "").toLowerCase();
-  if (/request not allowed/.test(lower)) return { cooldownMs: COOLDOWN_SHORT_MS, newBackoffLevel: backoffLevel };
+  if (/request not allowed/.test(lower)) return { kind: "short", cooldownMs: COOLDOWN_SHORT_MS, newBackoffLevel: backoffLevel };
+  // quota/balance death: long lock, NO backoff escalation — retrying sooner never helps
+  if (status === 402 || QUOTA_TEXT.some((r) => lower.includes(r)))
+    return { kind: "quota", cooldownMs: COOLDOWN_LONG_MS, newBackoffLevel: backoffLevel };
   const backsOff = ERROR_TEXT_BACKOFF.some((r) => lower.includes(r)) || status === 429;
   if (backsOff) {
     const lvl = Math.min(backoffLevel + 1, BACKOFF_CONFIG.maxLevel);
-    return { cooldownMs: getQuotaCooldown(lvl), newBackoffLevel: lvl };
+    return { kind: "rate", cooldownMs: backoffDelay(lvl), newBackoffLevel: lvl };
   }
-  if (status === 401 || status === 402 || status === 403 || status === 404) {
-    return { cooldownMs: COOLDOWN_LONG_MS, newBackoffLevel: backoffLevel };
+  if (status === 401 || status === 403 || status === 404) {
+    return { kind: "auth", cooldownMs: COOLDOWN_LONG_MS, newBackoffLevel: backoffLevel };
   }
-  return { cooldownMs: TRANSIENT_COOLDOWN_MS, newBackoffLevel: backoffLevel };
+  return { kind: "transient", cooldownMs: TRANSIENT_COOLDOWN_MS, newBackoffLevel: backoffLevel };
 }
 
-function getQuotaCooldown(level: number): number {
-  return Math.min(BACKOFF_CONFIG.base * 2 ** Math.max(0, level - 1), BACKOFF_CONFIG.max);
+/** Exponential backoff with symmetric jitter (dsh llm-retry formula). */
+function backoffDelay(level: number): number {
+  const base = Math.min(BACKOFF_CONFIG.base * 2 ** Math.max(0, level - 1), BACKOFF_CONFIG.max);
+  return Math.round(base * (1 - BACKOFF_JITTER + 2 * BACKOFF_JITTER * Math.random()));
+}
+
+/** Upstream `Retry-After` header: seconds integer or HTTP-date → ms delay from
+ *  now, else null. Honored verbatim over local backoff when sane. */
+export function parseRetryAfter(v: string | null): number | null {
+  if (!v) return null;
+  const s = v.trim();
+  if (/^\d+$/.test(s)) return Number(s) * 1000;
+  const d = Date.parse(s);
+  return Number.isNaN(d) ? null : Math.max(0, d - now());
 }
 
 /** A short, human-safe failure excerpt for cooldown reasons (upstream error text can be huge). */
@@ -435,6 +534,51 @@ function endMark(body: ReadableStream<Uint8Array>, onEnd: () => void): ReadableS
   });
 }
 
+/** Cut a stream whose upstream stalls: no chunk within `ms` → one SSE error
+ *  frame, then close (dsh per-read idle watchdog). Covers mid-stream death
+ *  that takeHead's first-chunk guard cannot see. */
+function idleGuard(body: ReadableStream<Uint8Array>, ms: number): ReadableStream<Uint8Array> {
+  const reader = body.getReader();
+  const enc = new TextEncoder();
+  return new ReadableStream<Uint8Array>({
+    async pull(c) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const n = await Promise.race([
+          reader.read(),
+          new Promise<"idle">((res) => {
+            timer = setTimeout(() => res("idle"), ms);
+          }),
+        ]);
+        if (n === "idle") {
+          c.enqueue(
+            enc.encode(
+              `data: ${JSON.stringify({
+                error: { message: `upstream idle for over ${ms}ms`, type: "server_error", code: "timeout" },
+              })}\n\n`,
+            ),
+          );
+          c.close();
+          reader.cancel().catch(() => {});
+          return;
+        }
+        if (n.done) {
+          c.close();
+          return;
+        }
+        c.enqueue(n.value);
+      } catch {
+        c.close();
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    cancel() {
+      reader.cancel().catch(() => {});
+    },
+  });
+}
+
 async function forward(
   body: Record<string, unknown>,
   conn: Connection,
@@ -479,6 +623,12 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
 
   const t0 = now();
   const stream = body.stream === true;
+  // capability preflight inputs (computed once): members that cannot serve the
+  // request are skipped upfront instead of failing mid-walk
+  const bodyJson = JSON.stringify(body.messages ?? "");
+  const needsTools = Array.isArray(body.tools) && body.tools.length > 0;
+  const needsVision = bodyJson.includes("image_url") || bodyJson.includes('"image"');
+  const estTokens = Math.ceil(bodyJson.length / 4);
   let lastError: string | null = null;
   let lastStatus = 502;
   let lastRaw: { body: string; status: number } | null = null;
@@ -495,6 +645,19 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
     if (!def) {
       lastError = `Unknown provider: ${provider}`;
       lastStatus = 404;
+      continue;
+    }
+    // preflight: metadata-known members that can't serve the request are skipped
+    // with a typed reason (regex floor defaults keep unknown models eligible)
+    const meta = enrich(`${provider}/${model}`);
+    const missing: string[] = [];
+    if (needsTools && !meta.toolCall) missing.push("tools");
+    if (needsVision && !meta.attachment) missing.push("vision");
+    if (meta.limit?.context && estTokens > meta.limit.context)
+      missing.push(`context (${estTokens} est > ${meta.limit.context})`);
+    if (missing.length) {
+      lastError = `${provider}/${model} preflight: no ${missing.join(", ")}`;
+      lastStatus = 503;
       continue;
     }
     // thinking setup — effort aliases inject reasoning_effort ("o3-mini-high"),
@@ -551,84 +714,97 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
         }
         break;
       }
-      const conn = deps.cooldowns.pick(eligible, `${provider}/${model}`, deps.strategy);
+      // per-account concurrency cap: prefer under-cap accounts; when all are
+      // saturated, pile onto the least-loaded one rather than the same one
+      const load = (c: Connection) => inflight.get(c.id) ?? 0;
+      const free = eligible.filter((c) => load(c) < MAX_INFLIGHT_PER_CONN);
+      const pool = free.length > 0 ? free : [eligible.reduce((a, b) => (load(a) <= load(b) ? a : b))];
+      const conn = deps.cooldowns.pick(pool, `${provider}/${model}`, deps.strategy);
 
       // command-code speaks the alpha/generate wire format, not chat completions
       const cc = def.id === "command-code";
       const wrapped = cc ? wrapCommandCode(effBody) : null;
 
-      let res: Response;
+      inflight.set(conn.id, (inflight.get(conn.id) ?? 0) + 1);
       try {
-        res = await forward(wrapped?.body ?? effBody, conn, def, deps.signal);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "network error";
-        deps.cooldowns.fail(conn.id, model, 0, msg, circuitKey);
-        lastError = msg;
-        lastStatus = 502;
-        excluded.add(conn.id);
-        continue;
-      }
-
-      if (res.ok) {
-        if (cc) {
-          deps.cooldowns.success(conn.id, model, circuitKey);
-          deps.onLog({ provider, model, combo: combo?.name, status: "200 OK", latency_ms: now() - t0 });
-          return commandCodeReply(res, stream, model, wrapped!.toolMap, deps.signal);
-        }
-        if (!stream) {
-          // buffer JSON bodies — dead/empty/oversize upstreams fall through to
-          // the next account instead of forwarding a broken payload
-          const full = await readBody(res);
-          if (full.error) {
-            deps.cooldowns.fail(conn.id, model, 0, full.error, circuitKey);
-            lastError = full.error;
-            lastStatus = 502;
-            excluded.add(conn.id);
-            continue;
-          }
-          const tokens = usageOf(full.text!);
-          deps.cooldowns.success(conn.id, model, circuitKey);
-          deps.onLog({
-            provider,
-            model,
-            combo: combo?.name,
-            status: "200 OK",
-            latency_ms: now() - t0,
-            ...(tokens ? { tokens } : {}),
-          });
-          return passthrough(new Response(full.text!, { status: res.status, headers: res.headers }), false);
-        }
-        // streaming: guard the first chunk, tee usage off the wire, log at end
-        const head = await takeHead(res, true);
-        if (head.error) {
-          deps.cooldowns.fail(conn.id, model, 0, head.error, circuitKey);
-          lastError = head.error;
+        let res: Response;
+        try {
+          res = await forward(wrapped?.body ?? effBody, conn, def, deps.signal);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "network error";
+          deps.cooldowns.fail(conn.id, model, 0, msg, circuitKey);
+          lastError = msg;
           lastStatus = 502;
           excluded.add(conn.id);
           continue;
         }
-        deps.cooldowns.success(conn.id, model, circuitKey);
-        let tokens: Record<string, number> | undefined;
-        const scanned = head.res.body!.pipeThrough(scanUsage((u) => (tokens = normalizeTokens(u))));
-        const logged = endMark(scanned, () =>
-          deps.onLog({
-            provider,
-            model,
-            combo: combo?.name,
-            status: "200 OK",
-            latency_ms: now() - t0,
-            ...(tokens ? { tokens } : {}),
-          }),
-        );
-        return passthrough(new Response(logged, { status: 200, headers: res.headers }), true);
-      }
 
-      const bodyText = await res.text().catch(() => "");
-      if (cc) lastRaw = { body: bodyText, status: res.status };
-      deps.cooldowns.fail(conn.id, model, res.status, bodyText, circuitKey);
-      lastError = bodyText || res.statusText || `HTTP ${res.status}`;
-      lastStatus = res.status;
-      excluded.add(conn.id);
+        if (res.ok) {
+          if (cc) {
+            deps.cooldowns.success(conn.id, model, circuitKey);
+            deps.onLog({ provider, model, combo: combo?.name, status: "200 OK", latency_ms: now() - t0 });
+            return commandCodeReply(res, stream, model, wrapped!.toolMap, deps.signal);
+          }
+          if (!stream) {
+            // buffer JSON bodies — dead/empty/oversize upstreams fall through to
+            // the next account instead of forwarding a broken payload
+            const full = await readBody(res);
+            if (full.error) {
+              deps.cooldowns.fail(conn.id, model, 0, full.error, circuitKey);
+              lastError = full.error;
+              lastStatus = 502;
+              excluded.add(conn.id);
+              continue;
+            }
+            const tokens = usageOf(full.text!);
+            deps.cooldowns.success(conn.id, model, circuitKey);
+            deps.onLog({
+              provider,
+              model,
+              combo: combo?.name,
+              status: "200 OK",
+              latency_ms: now() - t0,
+              ...(tokens ? { tokens } : {}),
+            });
+            return passthrough(new Response(full.text!, { status: res.status, headers: res.headers }), false);
+          }
+          // streaming: guard the first chunk, tee usage off the wire, log at end
+          const head = await takeHead(res, true);
+          if (head.error) {
+            deps.cooldowns.fail(conn.id, model, 0, head.error, circuitKey, parseRetryAfter(res.headers.get("retry-after")));
+            lastError = head.error;
+            lastStatus = 502;
+            excluded.add(conn.id);
+            continue;
+          }
+          deps.cooldowns.success(conn.id, model, circuitKey);
+          let tokens: Record<string, number> | undefined;
+          // ponytail: slot frees at handoff, not stream end — move the release
+          // into endMark if per-account accounting must cover full stream duration
+          const guarded = idleGuard(head.res.body!, STREAM_IDLE_TIMEOUT_MS);
+          const scanned = guarded.pipeThrough(scanUsage((u) => (tokens = normalizeTokens(u))));
+          const logged = endMark(scanned, () =>
+            deps.onLog({
+              provider,
+              model,
+              combo: combo?.name,
+              status: "200 OK",
+              latency_ms: now() - t0,
+              ...(tokens ? { tokens } : {}),
+            }),
+          );
+          return passthrough(new Response(logged, { status: 200, headers: res.headers }), true);
+        }
+
+        const bodyText = await res.text().catch(() => "");
+        if (cc) lastRaw = { body: bodyText, status: res.status };
+        deps.cooldowns.fail(conn.id, model, res.status, bodyText, circuitKey, parseRetryAfter(res.headers.get("retry-after")));
+        lastError = bodyText || res.statusText || `HTTP ${res.status}`;
+        lastStatus = res.status;
+        excluded.add(conn.id);
+      } finally {
+        inflight.set(conn.id, Math.max(0, (inflight.get(conn.id) ?? 1) - 1));
+      }
     }
   }
 
