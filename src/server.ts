@@ -11,6 +11,7 @@ import {
   verifyPassword,
 } from "./auth";
 import { type ApiAuth, type DashPass, Store } from "./db";
+import { installOpenCodePlugin } from "./opencode-plugin";
 import { isReasoningModel } from "./reasoning";
 import {
   customProviderIds,
@@ -137,10 +138,19 @@ function buildDeps(request: Request): ChatDeps {
 function modelsList(): unknown[] {
   const out: unknown[] = [];
   for (const combo of store.listCombos()) {
-    out.push({ id: combo.name, object: "model", owned_by: "troy" });
+    // a combo thinks only when every member does (lowest common capability)
+    const reasoning =
+      combo.models.length > 0 && combo.models.every((s) => isReasoningModel(s.slice(s.indexOf("/") + 1)));
+    out.push({ id: combo.name, object: "model", owned_by: "troy", reasoning });
   }
   for (const m of store.listModels()) {
-    out.push({ id: m.spec, object: "model", owned_by: m.provider, custom: true });
+    out.push({
+      id: m.spec,
+      object: "model",
+      owned_by: m.provider,
+      custom: true,
+      reasoning: isReasoningModel(m.model),
+    });
   }
   const active = new Set(store.activeProviderIds());
   for (const pid of providerIds()) {
@@ -410,6 +420,19 @@ const server: Server<undefined> = Bun.serve({
           401,
           { "www-authenticate": "Bearer" },
         );
+      }
+    }
+
+    if (path === "/api/install-opencode-plugin" && request.method === "POST") {
+      try {
+        return json(
+          installOpenCodePlugin({
+            baseUrl: url.origin,
+            apiKey: apiAuth.on === 1 ? apiAuth.key : "",
+          }),
+        );
+      } catch (e) {
+        return json({ error: e instanceof Error ? e.message : "install failed" }, 500);
       }
     }
 

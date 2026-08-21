@@ -8,6 +8,7 @@ import {
   KeyRound,
   Layers,
   MousePointer2,
+  PlugZap,
   RefreshCw,
   Sparkles,
 } from "lucide-react";
@@ -131,7 +132,7 @@ Model:               ${m}`,
   },
   {
     name: "OpenCode",
-    desc: "opencode.json (project or ~/.config/opencode) — every chosen model",
+    desc: "opencode.json (project or ~/.config/opencode) — or install the plugin above for a live model list",
     icon: Code2,
     lang: "json",
     code: (b, m, all, key) => {
@@ -219,6 +220,8 @@ export function ToolsPage() {
   const base = location.origin;
   const [selectedModel, setSelectedModel] = useState("");
   const [rotating, setRotating] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const [pluginMsg, setPluginMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const logs = useApi<LogRow[]>("/api/logs?limit=100");
   const saved = useApi<SavedModel[]>("/api/models");
   const combos = useApi<Combo[]>("/api/combos");
@@ -246,6 +249,22 @@ export function ToolsPage() {
   const toggleAuth = async (on: boolean) => {
     await api<ApiKeyInfo>("/api/key", { method: "PUT", body: JSON.stringify({ on }) });
     keyInfo.refetch();
+  };
+
+  const installPlugin = async () => {
+    setInstalling(true);
+    setPluginMsg(null);
+    try {
+      const res = await api<{ path: string }>("/api/install-opencode-plugin", { method: "POST" });
+      setPluginMsg({
+        ok: true,
+        text: `installed → ${res.path} — restart OpenCode, then pick any troy/… model (list stays live)`,
+      });
+    } catch (e) {
+      setPluginMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setInstalling(false);
+    }
   };
 
   return (
@@ -293,6 +312,33 @@ export function ToolsPage() {
               require key
             </label>
           </div>
+          <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2">
+            <PlugZap className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="text-[11px] font-medium">OpenCode plugin</span>
+            <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
+              live model list in OpenCode — no snippet copying, new picks appear automatically
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-6 gap-1 px-2 text-[11px]"
+              onClick={installPlugin}
+              disabled={installing}
+            >
+              <PlugZap className="size-3" />
+              {installing ? "installing…" : "install"}
+            </Button>
+          </div>
+          {pluginMsg ? (
+            <p
+              className={cn(
+                "text-[11px]",
+                pluginMsg.ok ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400",
+              )}
+            >
+              {pluginMsg.text}
+            </p>
+          ) : null}
           {chosen.length > 0 ? (
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="text-[11px] text-muted-foreground">chosen models:</span>
