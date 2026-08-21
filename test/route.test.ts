@@ -47,6 +47,21 @@ const stub = Bun.serve({
         { status: 200 },
       );
     }
+    if (key === "midstream") {
+      // 200 that streams two chunks, then the socket dies
+      const enc = (s: string) => new TextEncoder().encode(s);
+      return new Response(
+        new ReadableStream({
+          async start(c) {
+            c.enqueue(enc('data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n'));
+            await new Promise((r) => setTimeout(r, 10));
+            c.enqueue(enc('data: {"choices":[{"delta":{"content":"lo"}}]}\n\n'));
+            c.error(new Error("connection reset by peer"));
+          },
+        }),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    }
     const b = behaviors.get(key);
     if (b?.headers?.["content-type"] === "text/event-stream") {
       return new Response(b.body, { status: b.status, headers: { "content-type": "text/event-stream" } });
@@ -239,6 +254,24 @@ describe("streaming failover + usage capture", () => {
     await res.text(); // drain — stream logs are deferred to end of body
     expect(ctx.logs[0].status).toBe("200 OK");
     expect(ctx.logs[0].provider).toBe("openai");
+  });
+
+  test("mid-stream death injects an error frame AND cools the account down", async () => {
+    const ctx = makeDeps();
+    addConn(ctx, "openai", "midstream");
+    const conn = ctx.store.listConnections("openai")[0];
+    const res = await handleChat({ model: "openai/gpt-4o", stream: true, messages: [] }, ctx.deps);
+    expect(res.status).toBe(200);
+    const text = await res.text(); // drain to trigger the deferred failure
+    // client saw partial content then the injected error frame
+    expect(text).toContain('"content":"Hel"');
+    expect(text).toContain('"code":"bad_gateway"');
+    // success was recorded at handoff, but the mid-stream fail re-locked it
+    expect(ctx.cd.isEligible(conn.id, "gpt-4o")).toBe(false);
+    expect(ctx.cd.lockExpiry(conn.id, "gpt-4o")).toBeGreaterThan(Date.now());
+    // and the next walk skips the cooled account → 503 (no other account)
+    const second = await handleChat({ model: "openai/gpt-4o", stream: true, messages: [] }, ctx.deps);
+    expect(second.status).toBe(503);
   });
 
   test("empty 200 body falls through (non-stream)", async () => {
@@ -659,6 +692,34 @@ describe("cooldown management (dsh-derived)", () => {
       { ts: Date.now(), kind: "fail", conn_id: "c4", key: "m4", until_ms: Date.now() - 1000, backoff_level: 2 },
     ]);
     expect(cd3.isEligible("c4", "m4")).toBe(true);
+  });
+
+  test("trace emits cooldown/clear/circuit lines", () => {
+    const lines: string[] = [];
+    const cd = new CooldownStore(undefined, (line) => lines.push(line));
+    cd.fail("conn-uuid-1234", "gpt-4o", 429, "rate limit exceeded");
+    expect(lines.some((l) => l.startsWith("cooldown gpt-4o 429") && l.includes("conn-uui"))).toBe(true);
+    cd.success("conn-uuid-1234", "gpt-4o");
+    expect(lines.some((l) => l.startsWith("clear gpt-4o"))).toBe(true);
+    for (let i = 0; i < 3; i++) cd.fail("cx", "m", 500, "boom", "prov/m");
+    expect(lines.some((l) => l.startsWith("circuit OPEN prov/m"))).toBe(true);
+    // plain success with nothing locked stays silent
+    const before = lines.length;
+    cd.success("fresh-acct", "other-model");
+    expect(lines.length).toBe(before);
+  });
+
+  test("replay traces recovery summary when state was restored", () => {
+    const events: StateEvent[] = [
+      { ts: Date.now(), kind: "fail", conn_id: "c1", key: "m1", until_ms: Date.now() + 5000, backoff_level: 1 },
+    ];
+    const lines: string[] = [];
+    CooldownStore.replay(events, undefined, (line) => lines.push(line));
+    expect(lines.some((l) => l.includes("recovered 1 cooldown"))).toBe(true);
+    // nothing to recover → silent
+    const silent: string[] = [];
+    CooldownStore.replay([], undefined, (line) => silent.push(line));
+    expect(silent.length).toBe(0);
   });
 });
 

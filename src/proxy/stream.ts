@@ -81,8 +81,13 @@ export async function readBody(res: Response): Promise<{ text: string | null; er
 
 /** Consume the first chunk of a streaming response and hand back a replayable
  *  body. A 200 whose body dies before emitting anything becomes a failure so
- *  the walk continues; mid-stream death surfaces one SSE error frame. */
-export async function takeHead(res: Response, stream: boolean): Promise<{ res: Response; error: string | null }> {
+ *  the walk continues; mid-stream death surfaces one SSE error frame and fires
+ *  `onMidstreamFail` so the caller can cool the account down. */
+export async function takeHead(
+  res: Response,
+  stream: boolean,
+  onMidstreamFail?: (message: string) => void,
+): Promise<{ res: Response; error: string | null }> {
   const reader = res.body!.getReader();
   let first: Chunk;
   try {
@@ -104,14 +109,16 @@ export async function takeHead(res: Response, stream: boolean): Promise<{ res: R
         n = await reader.read();
       } catch (e) {
         if (stream && opened) {
+          const message = e instanceof Error ? e.message : "upstream connection lost mid-stream";
+          try {
+            onMidstreamFail?.(message);
+          } catch {
+            /* cooldown bookkeeping must never break the stream */
+          }
           c.enqueue(
             ENC.encode(
               `data: ${JSON.stringify({
-                error: {
-                  message: e instanceof Error ? e.message : "upstream connection lost mid-stream",
-                  type: "server_error",
-                  code: "bad_gateway",
-                },
+                error: { message, type: "server_error", code: "bad_gateway" },
               })}\n\n`,
             ),
           );

@@ -32,7 +32,13 @@ mkdirSync(DATA_DIR, { recursive: true });
 const store = new Store(`${DATA_DIR}/troy.db`);
 store.startLogFlush(2000);
 // fold the durable state_events log back into live cooldowns/breakers (restart recovery)
-const cooldowns = CooldownStore.replay(store.foldStateEvents(), { append: (e) => store.appendStateEvent(e) });
+const cooldowns = CooldownStore.replay(store.foldStateEvents(), { append: (e) => store.appendStateEvent(e) }, (line) =>
+  console.log(`  ${line}`),
+);
+
+// per-request routing trace — off by default, TROY_TRACE=1 for full play-by-play
+const TRACE = process.env.TROY_TRACE === "1";
+const trace = (line: string) => console.log(`  ${line}`);
 
 // load user-defined providers into the registry
 for (const p of store.listCustomProviders()) {
@@ -134,6 +140,7 @@ function buildDeps(request: Request): ChatDeps {
     ponytailLevel: settings.ponytail_level,
     signal: request.signal,
     onLog: (row) => store.logRequest(row),
+    onTrace: TRACE ? trace : undefined,
   };
 }
 

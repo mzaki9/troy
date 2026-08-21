@@ -310,4 +310,51 @@ describe("command-code reply", () => {
     expect(body.usage.cache_read_input_tokens).toBe(4);
     expect(body.usage.no_cache_tokens).toBe(3);
   });
+
+  test("onDone reports canonical usage once (non-stream)", async () => {
+    const sse = [
+      `data: ${JSON.stringify({ type: "text-delta", text: "hi" })}\n\n`,
+      `data: ${JSON.stringify({ type: "finish", finishReason: "stop", totalUsage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } })}\n\n`,
+    ].join("");
+    const seen: (Record<string, unknown> | undefined)[] = [];
+    const res = await commandCodeReply(
+      new Response(sse, { headers: { "content-type": "text/event-stream" } }),
+      false,
+      "m",
+      new Map(),
+      undefined,
+      (u) => seen.push(u),
+    );
+    await res.json();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 });
+  });
+
+  test("onDone fires at stream end, exactly once (streaming)", async () => {
+    const sse = [
+      `data: ${JSON.stringify({ type: "text-delta", text: "yo" })}\n\n`,
+      `data: ${JSON.stringify({ type: "finish", finishReason: "stop", totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } })}\n\n`,
+    ].join("");
+    const seen: (Record<string, unknown> | undefined)[] = [];
+    const res = await commandCodeReply(
+      new Response(sse, { headers: { "content-type": "text/event-stream" } }),
+      true,
+      "m",
+      new Map(),
+      undefined,
+      (u) => seen.push(u),
+    );
+    await res.text();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ prompt_tokens: 1, completion_tokens: 1 });
+  });
+
+  test("onDone(undefined) when upstream has no body", async () => {
+    const seen: (Record<string, unknown> | undefined)[] = [];
+    const res = await commandCodeReply(new Response(null, { status: 200 }), false, "m", new Map(), undefined, (u) =>
+      seen.push(u),
+    );
+    expect(res.status).toBe(502);
+    expect(seen).toEqual([undefined]);
+  });
 });

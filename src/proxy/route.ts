@@ -42,6 +42,8 @@ export interface ChatDeps {
   ponytailLevel: string;
   signal?: AbortSignal;
   onLog: (row: LogRow) => void;
+  /** optional terminal trace for routing decisions (TROY_TRACE=1) */
+  onTrace?: (line: string) => void;
 }
 
 function openaiError(status: number, message: string): Response {
@@ -170,6 +172,7 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
     if (!def) {
       lastError = `Unknown provider: ${provider}`;
       lastStatus = 404;
+      deps.onTrace?.(`skip ${provider}/${model} — unknown provider`);
       continue;
     }
     // preflight: metadata-known members that can't serve the request are skipped
@@ -183,6 +186,7 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
     if (missing.length) {
       lastError = `${provider}/${model} preflight: no ${missing.join(", ")}`;
       lastStatus = 503;
+      deps.onTrace?.(`skip ${provider}/${model} — no ${missing.join(", ")}`);
       continue;
     }
     // thinking setup — effort aliases inject reasoning_effort ("o3-mini-high"),
@@ -226,6 +230,7 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
     if (deps.cooldowns.isOpen(circuitKey)) {
       lastError = `${circuitKey} circuit open — skipping (breaker)`; // will be overwritten if a later member succeeds
       lastStatus = 503;
+      deps.onTrace?.(`skip ${circuitKey} — circuit open`);
       continue;
     }
 
@@ -251,6 +256,9 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
       const free = eligible.filter((c) => load(c) < MAX_INFLIGHT_PER_CONN);
       const pool = free.length > 0 ? free : [eligible.reduce((a, b) => (load(a) <= load(b) ? a : b))];
       const conn = deps.cooldowns.pick(pool, `${provider}/${model}`, deps.strategy);
+      deps.onTrace?.(
+        `→ ${provider}/${model} via ${conn.name ?? conn.id.slice(0, 8)}${combo ? ` [combo ${combo.name}]` : ""}`,
+      );
 
       inflight.set(conn.id, (inflight.get(conn.id) ?? 0) + 1);
       try {
@@ -269,16 +277,21 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
         if (res.ok) {
           if (cc) {
             deps.cooldowns.success(conn.id, model, circuitKey);
-            deps.onLog({
-              provider,
-              model,
-              combo: combo?.name,
-              status: "200 OK",
-              latency_ms: now() - t0,
-              rtk_saved: rtkSaved,
-              rtk_seen: rtkSeen,
-            });
-            return commandCodeReply(res, stream, model, wrapped!.toolMap, deps.signal);
+            // alpha/generate usage only exists after the stream is consumed —
+            // defer the row to stream end (handoff-time logging = every cc row 0/0)
+            return commandCodeReply(res, stream, model, wrapped!.toolMap, deps.signal, (usage) =>
+              deps.onLog({
+                provider,
+                model,
+                combo: combo?.name,
+                status: "200 OK",
+                latency_ms: now() - t0,
+                // nested detail objects ride along; stats SQL reads the flat numeric keys
+                ...(usage ? { tokens: usage as Record<string, number> } : {}),
+                rtk_saved: rtkSaved,
+                rtk_seen: rtkSeen,
+              }),
+            );
           }
           if (!stream) {
             // buffer JSON bodies — dead/empty/oversize upstreams fall through to
@@ -306,7 +319,11 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
             return passthrough(new Response(full.text!, { status: res.status, headers: res.headers }), false);
           }
           // streaming: guard the first chunk, tee usage off the wire, log at end
-          const head = await takeHead(res, true);
+          const head = await takeHead(res, true, (msg) =>
+            // death after handoff can't fail over — but the account must still
+            // earn a cooldown or a flaky upstream keeps getting traffic
+            deps.cooldowns.fail(conn.id, model, 0, msg, circuitKey),
+          );
           if (head.error) {
             deps.cooldowns.fail(
               conn.id,
@@ -374,6 +391,7 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
     rtk_seen: rtkSeen,
   });
   const retryAfter = deps.cooldowns.earliestRetryAfter();
+  deps.onTrace?.(`chain exhausted → ${lastStatus}${lastError ? ` — ${lastError.slice(0, 120)}` : ""}`);
   const headers: Record<string, string> = { "content-type": "application/json", "access-control-allow-origin": "*" };
   if (retryAfter !== null && retryAfter > now())
     headers["retry-after"] = String(Math.max(1, Math.ceil((retryAfter - now()) / 1000)));

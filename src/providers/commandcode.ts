@@ -406,20 +406,37 @@ function throwError(ev: CcEvent): never {
   throw new Error(str(err.message) || str(ev.error) || "Command Code stream error");
 }
 
-/** alpha/generate reply (always SSE upstream) → chat completions JSON or SSE. */
+/**
+ * alpha/generate reply (always SSE upstream) → chat completions JSON or SSE.
+ * `onDone` fires exactly once when the upstream is consumed — done, errored, or
+ * aborted — with the final canonical usage (undefined when none arrived). troy's
+ * usage log defers cc row logging to this point: token counts only exist after
+ * ingest, so logging at handoff would record every row as 0/0.
+ */
 export async function commandCodeReply(
   upstream: Response,
   stream: boolean,
   model: string,
   toolMap: Map<string, string>,
   signal?: AbortSignal,
+  onDone?: (usage: Obj | undefined) => void,
 ): Promise<Response> {
   const reader = upstream.body?.getReader();
-  if (!reader) return errorResponse(new Error("Command Code response missing body"));
+  if (!reader) {
+    onDone?.(undefined);
+    return errorResponse(new Error("Command Code response missing body"));
+  }
 
   const decoder = new TextDecoder();
   const state: CcState = { content: "", reasoning: "", toolCalls: [], finishReason: "stop", usage: null };
   const id = chatId();
+
+  let reported = false;
+  const report = () => {
+    if (reported) return;
+    reported = true;
+    onDone?.(usageOf(state));
+  };
 
   const ingest = async (onEvent: (ev: CcEvent) => void): Promise<void> => {
     let buf = "";
@@ -473,6 +490,8 @@ export async function commandCodeReply(
       });
     } catch (err) {
       return errorResponse(err);
+    } finally {
+      report();
     }
     const message: Obj = { role: "assistant", content: state.content };
     if (state.reasoning) message.reasoning_content = state.reasoning;
@@ -564,6 +583,8 @@ export async function commandCodeReply(
       } catch (err) {
         signal?.removeEventListener("abort", onAbort!);
         controller.error(err);
+      } finally {
+        report();
       }
     },
     cancel() {

@@ -31,6 +31,11 @@ const QUOTA_TEXT = [
 
 const now = () => Date.now();
 
+/** 8-char account id prefix for trace lines — full UUIDs are unreadable noise. */
+function shortId(id: string): string {
+  return id.slice(0, 8);
+}
+
 interface CooldownState {
   until: number;
   backoff: number;
@@ -53,16 +58,22 @@ export class CooldownStore {
   /** per-combo round-robin start index (chain-level rotation) */
   private rrChain = new Map<string, number>();
 
-  constructor(private readonly sink?: CooldownSink) {}
+  constructor(
+    private readonly sink?: CooldownSink,
+    private readonly trace?: (line: string) => void,
+  ) {}
 
   /** Rebuild in-memory state from the durable event log (boot recovery).
    *  Expired entries are dropped; the newest fail per key wins via max(). */
-  static replay(events: StateEvent[], sink?: CooldownSink): CooldownStore {
-    const st = new CooldownStore(sink);
+  static replay(events: StateEvent[], sink?: CooldownSink, trace?: (line: string) => void): CooldownStore {
+    const st = new CooldownStore(sink, trace);
+    let locks = 0;
+    let circuits = 0;
     for (const e of events) {
       if (e.kind === "circuit_open") {
         if (!e.circuit_key || e.until_ms === null || e.until_ms === undefined || e.until_ms <= now()) continue;
         st.circuits.set(e.circuit_key, { fails: [], openUntil: e.until_ms });
+        circuits++;
         continue;
       }
       if (e.kind === "success") {
@@ -77,7 +88,9 @@ export class CooldownStore {
       const lockKey = e.key ?? "*";
       s.locks.set(lockKey, Math.max(s.locks.get(lockKey) ?? 0, e.until_ms));
       if (e.reason && e.key) st.reasons.set(`${e.conn_id}|${e.key}`, e.reason);
+      locks++;
     }
+    if (locks || circuits) st.trace?.(`recovered ${locks} cooldown(s), ${circuits} open circuit(s)`);
     return st;
   }
 
@@ -86,6 +99,15 @@ export class CooldownStore {
       this.sink?.append(e);
     } catch {
       /* durability must never break routing */
+    }
+  }
+
+  /** terminal trace line — account ids shortened to 8 chars for readability */
+  private emit(line: string) {
+    try {
+      this.trace?.(line);
+    } catch {
+      /* tracing must never break routing */
     }
   }
 
@@ -149,11 +171,16 @@ export class CooldownStore {
     const reason = extractReason(errText);
     if (reason) this.reasons.set(`${id}|${key}`, reason);
     this.countFailure(circuitKey);
+    this.emit(
+      `cooldown ${key} ${status || "net"} → ${Math.round(cooldownMs / 1000)}s (acct ${shortId(id)})${reason ? ` — ${reason}` : ""}`,
+    );
   }
 
   success(id: string, key: string, circuitKey = key) {
     const s = this.states.get(id);
     if (!s) return;
+    // trace only real recoveries — a plain 200 with nothing locked is noise
+    const wasLocked = s.until > now() || (s.locks.get(key) ?? 0) > now() || this.circuits.has(circuitKey);
     this.persist({ ts: now(), kind: "success", conn_id: id, key, circuit_key: circuitKey });
     s.locks.delete(key);
     s.until = 0;
@@ -169,6 +196,7 @@ export class CooldownStore {
     }
     // half-open probe succeeded → close the circuit
     this.circuits.delete(circuitKey);
+    if (wasLocked) this.emit(`clear ${key} (acct ${shortId(id)})`);
   }
 
   private countFailure(key: string) {
@@ -178,6 +206,7 @@ export class CooldownStore {
     if (c.fails.length >= CIRCUIT_THRESHOLD) {
       c.openUntil = now() + CIRCUIT_OPEN_MS;
       this.persist({ ts: now(), kind: "circuit_open", conn_id: "", circuit_key: key, until_ms: c.openUntil });
+      this.emit(`circuit OPEN ${key} — ${c.fails.length} fails, skipping ${Math.round(CIRCUIT_OPEN_MS / 1000)}s`);
     }
     this.circuits.set(key, c);
   }
