@@ -65,9 +65,17 @@ export default {
         // models live in their own map — registered one by one
         for (const m of models) {
           catalog.model.update("troy", m.id, (draft) => {
-            draft.name = m.id;
+            draft.name = m.name || m.id;
             // display-only fallback — troy is a passthrough, upstream enforces real limits
             draft.limit = { context: 200000, output: 32768 };
+            // real capability flags when troy serves them (models.dev enrichment)
+            if (m.tool_call === false || m.attachment === false) {
+              draft.capabilities = {
+                tools: m.tool_call !== false,
+                input: m.attachment === false ? ["text"] : ["text", "image"],
+                output: ["text"],
+              };
+            }
             // thinking models get effort variants (sent upstream as reasoning_effort)
             if (m.reasoning === true) {
               draft.variants = [

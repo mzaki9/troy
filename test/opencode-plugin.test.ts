@@ -60,7 +60,16 @@ describe("rendered plugin behavior", () => {
   test("registers provider info + one catalog model per usable model", async () => {
     withFetch([
       { id: "fast-coding", object: "model", owned_by: "troy", reasoning: false }, // combo — keep
-      { id: "openai/gpt-4o", object: "model", owned_by: "openai", custom: true, reasoning: true }, // chosen — keep
+      {
+        id: "openai/gpt-4o",
+        object: "model",
+        owned_by: "openai",
+        custom: true,
+        reasoning: true,
+        name: "GPT-4o", // models.dev display name
+        attachment: false, // text-only canonical
+        tool_call: true,
+      }, // chosen — keep
       { id: "openai", object: "model", owned_by: "openai" }, // bare provider row — drop
       { id: "anthropic/claude", object: "model", owned_by: "anthropic" }, // unchosen — drop
     ]);
@@ -100,8 +109,9 @@ describe("rendered plugin behavior", () => {
     const byId = new Map(modelCalls.map((m) => [m.id, m]));
     const gpt: Record<string, any> = {};
     byId.get("openai/gpt-4o")!.apply(gpt);
-    expect(gpt.name).toBe("openai/gpt-4o");
+    expect(gpt.name).toBe("GPT-4o"); // served display name wins over the raw id
     expect(gpt.limit).toEqual({ context: 200000, output: 32768 });
+    expect(gpt.capabilities).toEqual({ tools: true, input: ["text"], output: ["text"] }); // attachment:false honored
     expect(gpt.variants).toEqual([
       { id: "low", settings: { reasoningEffort: "low" } },
       { id: "medium", settings: { reasoningEffort: "medium" } },
@@ -109,6 +119,8 @@ describe("rendered plugin behavior", () => {
     ]);
     const combo: Record<string, any> = {};
     byId.get("fast-coding")!.apply(combo);
+    expect(combo.name).toBe("fast-coding"); // no served name → id
+    expect(combo.capabilities).toBeUndefined(); // no served flags → Info defaults stand
     expect(combo.variants).toBeUndefined();
     cleanup();
   });

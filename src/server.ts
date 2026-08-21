@@ -11,8 +11,8 @@ import {
   verifyPassword,
 } from "./auth";
 import { type ApiAuth, type DashPass, Store } from "./db";
+import { enrich, startModelsDevRefresh } from "./modelsdev";
 import { installOpenCodePlugin } from "./opencode-plugin";
-import { isReasoningModel } from "./reasoning";
 import {
   customProviderIds,
   getProvider,
@@ -139,17 +139,20 @@ function modelsList(): unknown[] {
   const out: unknown[] = [];
   for (const combo of store.listCombos()) {
     // a combo thinks only when every member does (lowest common capability)
-    const reasoning =
-      combo.models.length > 0 && combo.models.every((s) => isReasoningModel(s.slice(s.indexOf("/") + 1)));
+    const reasoning = combo.models.length > 0 && combo.models.every((s) => enrich(s).reasoning);
     out.push({ id: combo.name, object: "model", owned_by: "troy", reasoning });
   }
   for (const m of store.listModels()) {
+    const e = enrich(m.spec);
     out.push({
       id: m.spec,
       object: "model",
       owned_by: m.provider,
       custom: true,
-      reasoning: isReasoningModel(m.model),
+      reasoning: e.reasoning,
+      tool_call: e.toolCall,
+      attachment: e.attachment,
+      ...(e.name ? { name: e.name } : {}),
     });
   }
   const active = new Set(store.activeProviderIds());
@@ -519,7 +522,7 @@ const server: Server<undefined> = Bun.serve({
             models: (data.data ?? []).map((m) => ({
               id: m.id,
               name: m.name ?? m.id,
-              thinking: isReasoningModel(m.id),
+              thinking: enrich(m.id).reasoning,
             })),
           });
         })
@@ -530,7 +533,7 @@ const server: Server<undefined> = Bun.serve({
 
     if (path === "/api/models") {
       if (request.method === "GET") {
-        return json(store.listModels().map((m) => ({ ...m, thinking: isReasoningModel(m.model) })));
+        return json(store.listModels().map((m) => ({ ...m, thinking: enrich(m.spec).reasoning })));
       }
       if (request.method === "POST") {
         return readBody(request).then((b) => {
@@ -540,7 +543,7 @@ const server: Server<undefined> = Bun.serve({
           if (!getProvider(provider)) return json({ error: `unknown provider: ${provider}` }, 400);
           if (!model) return json({ error: "model id required" }, 400);
           const m = store.putModel(`${provider}/${model}`);
-          return json({ ...m, thinking: isReasoningModel(m.model) });
+          return json({ ...m, thinking: enrich(m.spec).reasoning });
         });
       }
     }
@@ -689,6 +692,7 @@ const server: Server<undefined> = Bun.serve({
 });
 
 console.log(`troy → ${server.url}  proxy: ${server.url}v1  dashboard: ${server.url}`);
+startModelsDevRefresh((msg) => console.log(`  ${msg}`));
 if (!dashPass) {
   console.log(
     `  dashboard password: ${DEFAULT_DASHBOARD_PASS} (default — change it under Settings → Dashboard password)`,
