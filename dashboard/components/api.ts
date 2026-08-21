@@ -86,6 +86,8 @@ export interface ProviderCat {
   name?: string;
   custom: boolean;
   connected: number;
+  /** chosen models for this provider (a chosen model implies a working key) */
+  chosen: number;
   baseUrl: string;
   auth: string;
   aliases: string[];

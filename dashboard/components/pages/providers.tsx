@@ -116,39 +116,48 @@ function Overview({ onOpen }: { onOpen: (id: string) => void }) {
             </div>
           ) : (
             <div className={GRID}>
-              {providers.data.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => onOpen(p.id)}
-                  title={p.baseUrl}
-                  className={cn(
-                    "flex gap-3 rounded-lg border bg-card px-4 py-3 text-left transition-colors hover:border-black/40 dark:hover:border-white/40 focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/20 focus-visible:outline-none",
-                    p.connected && "border-aloe",
-                  )}
-                >
-                  <ProviderIcon id={p.id} className="size-8 rounded-lg" />
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">
-                      {p.name ?? p.id}
-                      {p.custom ? (
-                        <span className="ml-1.5 rounded bg-primary/10 px-1 py-px text-[9px] font-semibold tracking-wide text-primary uppercase">
-                          custom
-                        </span>
-                      ) : null}
-                    </p>
-                    <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                      <span
+              {providers.data.map((p) => {
+                // "connected" = actually usable: an active key AND a chosen model
+                const ready = p.connected > 0 && p.chosen > 0;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => onOpen(p.id)}
+                    title={p.baseUrl}
+                    className={cn(
+                      "flex gap-3 rounded-lg border bg-card px-4 py-3 text-left transition-colors hover:border-black/40 dark:hover:border-white/40 focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/20 focus-visible:outline-none",
+                      ready && "border-aloe",
+                    )}
+                  >
+                    <ProviderIcon id={p.id} className="size-8 rounded-lg" />
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">
+                        {p.name ?? p.id}
+                        {p.custom ? (
+                          <span className="ml-1.5 rounded bg-primary/10 px-1 py-px text-[9px] font-semibold tracking-wide text-primary uppercase">
+                            custom
+                          </span>
+                        ) : null}
+                      </p>
+                      <p
                         className={cn(
-                          "size-1.5 rounded-full",
-                          p.connected ? "bg-emerald-500" : "bg-muted-foreground/60",
+                          "flex items-center gap-1.5 text-[11px]",
+                          ready && "text-emerald-600 dark:text-emerald-400",
                         )}
-                      />
-                      {p.connected ? `${p.connected} connected` : "no key"}
-                    </p>
-                  </div>
-                </button>
-              ))}
+                      >
+                        <span
+                          className={cn(
+                            "size-1.5 shrink-0 rounded-full",
+                            ready ? "bg-emerald-500" : p.connected ? "bg-amber-500" : "bg-muted-foreground/60",
+                          )}
+                        />
+                        {ready ? "connected" : p.connected ? "key added — pick a model" : "no key"}
+                      </p>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           )}
         </CardContent>

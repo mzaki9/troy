@@ -234,6 +234,10 @@ function providerCatalog(): unknown[] {
   for (const c of store.listConnections()) {
     counts.set(c.provider, (counts.get(c.provider) ?? 0) + (c.is_active === 1 ? 1 : 0));
   }
+  const chosen = new Map<string, number>();
+  for (const m of store.listModels()) {
+    chosen.set(m.provider, (chosen.get(m.provider) ?? 0) + 1);
+  }
   const customs = new Set(customProviderIds());
   return providerIds().map((id) => {
     const p = getProvider(id)!;
@@ -242,6 +246,7 @@ function providerCatalog(): unknown[] {
       name: p.name,
       custom: customs.has(id),
       connected: counts.get(id) ?? 0,
+      chosen: chosen.get(id) ?? 0,
       baseUrl: p.baseUrl,
       auth: p.auth,
       aliases: p.aliases,
