@@ -269,6 +269,13 @@ const MIME: Record<string, string> = {
 };
 
 function staticFile(pathname: string): Response | null {
+  if (pathname.startsWith("/assets/")) {
+    const file = Bun.file(`${import.meta.dir}/../public${pathname}`);
+    const ext = `.${pathname.split(".").pop()}`;
+    return new Response(file, {
+      headers: { "content-type": MIME[ext] ?? "application/octet-stream", "cache-control": "no-cache" },
+    });
+  }
   let rel = pathname === "/" ? "index.html" : pathname.replace(/^\//, "");
   if (rel === "app.js") rel = "dist/app.js";
   if (rel === "styles.css") rel = "dist/styles.css";

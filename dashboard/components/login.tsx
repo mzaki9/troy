@@ -33,18 +33,39 @@ export function LoginPage({ defaultPass, onAuthed }: { defaultPass: boolean; onA
   };
 
   return (
-    <div className="dot-grid flex h-screen items-center justify-center overflow-hidden p-5 text-foreground">
+    <div className="relative flex h-screen items-center justify-center overflow-hidden bg-[#232831] p-5">
+      {/* troy linework — white ink on desaturated wash */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 opacity-[0.18]"
+        style={{
+          backgroundImage: "url(/assets/troy_background.svg)",
+          backgroundSize: "cover",
+          backgroundPosition: "center 38%",
+          filter: "invert(1)",
+        }}
+      />
+      {/* lighter wash — white artwork still reads, not pitch black */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/20 via-black/30 to-black/45"
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_85%_75%_at_50%_42%,transparent_40%,rgba(0,0,0,0.35)_88%)]"
+      />
+
       <button
         type="button"
         onClick={toggleDark}
         aria-label="toggle dark mode"
         title={dark ? "switch to light mode" : "switch to dark mode"}
-        className="absolute top-5 right-5 flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
+        className="absolute top-5 right-5 z-20 flex size-9 items-center justify-center rounded-full bg-white/5 text-white/60 ring-1 ring-white/10 backdrop-blur transition-colors hover:bg-white/10 hover:text-white"
       >
         {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
       </button>
 
-      <Card className="w-full max-w-sm">
+      <Card className="relative z-10 w-full max-w-sm border-white/10 bg-card/95 shadow-2xl shadow-black/60 backdrop-blur-xl">
         <CardHeader className="items-center px-8 text-center">
           <span className="flex size-11 items-center justify-center rounded-full bg-primary text-primary-foreground">
             <Lock className="size-5" />
