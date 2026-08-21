@@ -34,18 +34,24 @@ function StatCard({
   label,
   value,
   sub,
+  subClass,
   valueClass,
+  title,
 }: {
   label: string;
   value: string;
   sub?: string;
+  subClass?: string;
   valueClass?: string;
+  title?: string;
 }) {
   return (
     <Card className="gap-1 px-5 py-4">
       <p className="text-[11px] tracking-[0.08em] text-muted-foreground uppercase">{label}</p>
-      <p className={cn("truncate text-3xl font-light tracking-[0.02em] tabular-nums", valueClass)}>{value}</p>
-      {sub ? <p className="text-[10px] text-muted-foreground">{sub}</p> : null}
+      <p className={cn("truncate text-3xl font-light tracking-[0.02em] tabular-nums", valueClass)} title={title}>
+        {value}
+      </p>
+      {sub ? <p className={cn("text-[10px] text-muted-foreground tabular-nums", subClass)}>{sub}</p> : null}
     </Card>
   );
 }
@@ -53,7 +59,7 @@ function StatCard({
 function StatSkeletons() {
   return (
     <>
-      {Array.from({ length: 5 }).map((_, i) => (
+      {Array.from({ length: 4 }).map((_, i) => (
         <Card key={i} className="gap-2 px-5 py-4">
           <Skeleton className="h-3 w-20" />
           <Skeleton className="h-7 w-24" />
@@ -350,7 +356,7 @@ export function UsagePage() {
       </TabsList>
 
       <TabsContent value="overview" className="view-switch space-y-4">
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {!t ? (
             <StatSkeletons />
           ) : (
@@ -359,17 +365,27 @@ export function UsagePage() {
               <StatCard
                 label="Success rate"
                 value={rate !== undefined ? `${rate.toFixed(1)}%` : "—"}
-                sub={rate !== undefined && rate < 100 && t.requests ? (rate >= 95 ? "" : "below 95%") : ""}
+                sub={t.requests && rate !== undefined && rate < 100 ? `${fmt.format(t.fail)} failed` : ""}
+                subClass={t.fail > 0 ? "text-red-600 dark:text-red-400" : undefined}
                 valueClass={rate !== undefined ? rateClass(rate) : ""}
               />
               <StatCard
-                label="Failed"
-                value={fmt.format(t.fail)}
-                valueClass={t.fail > 0 ? "text-red-600 dark:text-red-400" : ""}
+                label="Latency"
+                value={t.requests ? short(t.avg_ms) : "—"}
+                sub={t.requests ? `p95 ${short(t.p95_ms)}` : ""}
               />
-              <StatCard label="Avg latency" value={t.requests ? short(t.avg_ms) : "—"} />
-              <StatCard label="p95 latency" value={t.requests ? short(t.p95_ms) : "—"} />
-              <StatCard label="Tokens" value={`${tok(t.tokens_in)} / ${tok(t.tokens_out)}`} sub="in / out" />
+              {(() => {
+                const tin = t.tokens_in ?? 0;
+                const tout = t.tokens_out ?? 0;
+                return (
+                  <StatCard
+                    label="Tokens"
+                    value={tok(tin + tout)}
+                    sub={`↑ ${tok(tin)} in · ↓ ${tok(tout)} out`}
+                    title={`${tin.toLocaleString()} in / ${tout.toLocaleString()} out`}
+                  />
+                );
+              })()}
             </>
           )}
         </div>

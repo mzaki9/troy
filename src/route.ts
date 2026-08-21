@@ -268,10 +268,31 @@ function numericUsage(u: unknown): Record<string, number> | undefined {
 /** usage from a complete chat-completions JSON body. */
 function usageOf(text: string): Record<string, number> | undefined {
   try {
-    return numericUsage((JSON.parse(text) as { usage?: unknown }).usage);
+    return normalizeTokens(numericUsage((JSON.parse(text) as { usage?: unknown }).usage));
   } catch {
     return undefined;
   }
+}
+
+/** Map provider dialects onto the OpenAI keys the stats SQL extracts.
+ *  Anthropic-style upstreams say input_tokens/output_tokens; others camelCase. */
+function normalizeTokens(u: Record<string, number> | undefined): Record<string, number> | undefined {
+  if (!u) return u;
+  const pick = (...keys: string[]): number | undefined => {
+    for (const k of keys) {
+      const v = u[k];
+      if (typeof v === "number") return v;
+    }
+    return undefined;
+  };
+  const prompt = pick("prompt_tokens", "input_tokens", "promptTokens", "inputTokens");
+  const completion = pick("completion_tokens", "output_tokens", "completionTokens", "outputTokens");
+  if (prompt === undefined && completion === undefined) return u;
+  return {
+    ...u,
+    ...(prompt !== undefined ? { prompt_tokens: prompt } : {}),
+    ...(completion !== undefined ? { completion_tokens: completion } : {}),
+  };
 }
 
 const BODY_CAP = 32 << 20; // upstream JSON bodies beyond this are treated as failures
@@ -484,6 +505,11 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
     } else {
       delete effBody.reasoning_effort;
     }
+    // streaming upstreams omit `usage` unless the request asks for it — without
+    // this every streamed row logs no tokens and the dashboard shows 0/0
+    if (effBody.stream === true && !effBody.stream_options) {
+      effBody.stream_options = { include_usage: true };
+    }
     let accounts = deps.store.listConnections(provider);
     if (def.auth === "none" && accounts.length === 0) {
       // keyless providers (opencode zen free tier) need no stored key — route without one
@@ -583,7 +609,7 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
         }
         deps.cooldowns.success(conn.id, model, circuitKey);
         let tokens: Record<string, number> | undefined;
-        const scanned = head.res.body!.pipeThrough(scanUsage((u) => (tokens = u)));
+        const scanned = head.res.body!.pipeThrough(scanUsage((u) => (tokens = normalizeTokens(u))));
         const logged = endMark(scanned, () =>
           deps.onLog({
             provider,

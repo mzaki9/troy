@@ -271,6 +271,56 @@ describe("streaming failover + usage capture", () => {
     expect(ctx.logs[0].tokens).toEqual({ prompt_tokens: 5, completion_tokens: 2 });
   });
 
+  test("streaming requests ask upstream for usage (stream_options injection)", async () => {
+    behaviors.set("sse-tok", {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+      body: "data: [DONE]\n\n",
+    });
+    const ctx = makeDeps();
+    addConn(ctx, "openai", "sse-tok");
+    await handleChat({ model: "openai/gpt-4o", stream: true, messages: [] }, ctx.deps);
+    expect(lastPayload).toMatchObject({ stream_options: { include_usage: true } });
+  });
+
+  test("client-supplied stream_options are preserved verbatim", async () => {
+    behaviors.set("sse-tok", {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+      body: "data: [DONE]\n\n",
+    });
+    const ctx = makeDeps();
+    addConn(ctx, "openai", "sse-tok");
+    await handleChat(
+      { model: "openai/gpt-4o", stream: true, messages: [], stream_options: { include_usage: false } },
+      ctx.deps,
+    );
+    expect(lastPayload).toMatchObject({ stream_options: { include_usage: false } });
+  });
+
+  test("non-streaming requests are not touched by the usage flag", async () => {
+    behaviors.set("tok", { status: 200, body: JSON.stringify({ choices: [], usage: {} }) });
+    const ctx = makeDeps();
+    addConn(ctx, "openai", "tok");
+    await handleChat({ model: "openai/gpt-4o", messages: [] }, ctx.deps);
+    expect(lastPayload).not.toHaveProperty("stream_options");
+  });
+
+  test("anthropic-dialect usage is normalized onto prompt/completion keys", async () => {
+    const sse = [
+      'data: {"choices":[{"delta":{"content":"hi"}}]}',
+      'data: {"choices":[],"usage":{"input_tokens":7,"output_tokens":3}}',
+      "data: [DONE]",
+      "",
+    ].join("\n\n");
+    behaviors.set("sse-anth", { status: 200, headers: { "content-type": "text/event-stream" }, body: sse });
+    const ctx = makeDeps();
+    addConn(ctx, "openai", "sse-anth");
+    const res = await handleChat({ model: "openai/gpt-4o", stream: true, messages: [] }, ctx.deps);
+    await res.text();
+    expect(ctx.logs[0].tokens).toMatchObject({ prompt_tokens: 7, completion_tokens: 3 });
+  });
+
   test("mid-stream death surfaces an SSE error frame (takeHead unit)", async () => {
     const enc = new TextEncoder();
     let sent = false;
