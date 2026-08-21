@@ -1,7 +1,15 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { installOpenCodePlugin, openCodePluginDir, renderOpenCodePlugin } from "../src/opencode-plugin";
+
+// these tests swap globalThis.fetch — restore it after each one, or the mock
+// poisons every test file that runs later in the same process (nondeterministic
+// file order made CI fail while local passed)
+const realFetch = globalThis.fetch;
+afterEach(() => {
+  (globalThis as { fetch: unknown }).fetch = realFetch;
+});
 
 describe("renderOpenCodePlugin", () => {
   test("fills both placeholders with escaped values", () => {
