@@ -17,7 +17,7 @@
  */
 
 import seed from "./modelsdev-seed.json";
-import { isReasoningModel } from "./reasoning";
+import { isReasoningModel } from "./providers/reasoning";
 
 // ---- shapes -----------------------------------------------------------------
 

@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
-import type { Provider } from "./registry";
+import type { Provider } from "../proxy/registry";
+import { runMigrations } from "./migrations";
 
 export interface Connection {
   id: string;
@@ -71,6 +72,14 @@ const DEFAULTS: Settings = {
   strategy: "fill-first",
 };
 
+/** Split "provider/model" — guards specs without "/" so the last character
+ *  never leaks into the provider field (slice(0,-1) trap). */
+function splitSpec(spec: string): { provider: string; model: string } {
+  const i = spec.indexOf("/");
+  if (i <= 0) return { provider: "", model: spec };
+  return { provider: spec.slice(0, i), model: spec.slice(i + 1) };
+}
+
 export class Store {
   private db: Database;
   private logQueue: [string, string, string, string | null, string, number, string, number, number][] = [];
@@ -86,83 +95,7 @@ export class Store {
     // and checkpoint WAL often so the -wal file stays tiny
     this.db.run("PRAGMA cache_size = -1024;");
     this.db.run("PRAGMA wal_autocheckpoint = 500;");
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS connections (
-        id TEXT PRIMARY KEY,
-        provider TEXT NOT NULL,
-        api_key TEXT NOT NULL,
-        base_url TEXT,
-        extra TEXT NOT NULL DEFAULT '{}',
-        priority INTEGER NOT NULL DEFAULT 0,
-        is_active INTEGER NOT NULL DEFAULT 1,
-        created_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS combos (
-        id TEXT PRIMARY KEY,
-        name TEXT UNIQUE NOT NULL,
-        models TEXT NOT NULL,
-        strategy TEXT NOT NULL DEFAULT 'fallback'
-      );
-      CREATE TABLE IF NOT EXISTS models (
-        spec TEXT PRIMARY KEY,
-        created_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS kv (
-        scope TEXT NOT NULL,
-        key TEXT NOT NULL,
-        value TEXT NOT NULL,
-        PRIMARY KEY (scope, key)
-      );
-      CREATE TABLE IF NOT EXISTS usage_history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        ts TEXT NOT NULL,
-        provider TEXT,
-        model TEXT,
-        combo TEXT,
-        status TEXT,
-        latency_ms INTEGER,
-        tokens TEXT DEFAULT '{}'
-      );      CREATE INDEX IF NOT EXISTS idx_conn_provider ON connections(provider, is_active, priority);
-      CREATE INDEX IF NOT EXISTS idx_uh_ts ON usage_history(ts DESC);
-      CREATE TABLE IF NOT EXISTS state_events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        ts INTEGER NOT NULL,
-        kind TEXT NOT NULL,
-        conn_id TEXT NOT NULL,
-        key TEXT,
-        circuit_key TEXT,
-        status INTEGER,
-        reason TEXT,
-        until_ms INTEGER,
-        backoff_level INTEGER
-      );
-      CREATE INDEX IF NOT EXISTS idx_state_events_ts ON state_events(ts);
-    `);
-    // migrate old provider ids → canonical names
-    this.db.run("UPDATE connections SET provider = 'alibaba' WHERE provider = 'alims-intl';");
-    this.db.run("UPDATE usage_history SET provider = 'alibaba' WHERE provider = 'alims-intl';");
-    this.db.run("UPDATE connections SET provider = 'zai' WHERE provider = 'glm';");
-    this.db.run("UPDATE usage_history SET provider = 'zai' WHERE provider = 'glm';");
-    this.db.run("UPDATE connections SET provider = 'zai-cn' WHERE provider = 'glm-cn';");
-    this.db.run("UPDATE usage_history SET provider = 'zai-cn' WHERE provider = 'glm-cn';");
-    this.db.run("UPDATE connections SET provider = 'alibaba-token-plan' WHERE provider = 'alitp-intl';");
-    this.db.run("UPDATE usage_history SET provider = 'alibaba-token-plan' WHERE provider = 'alitp-intl';");
-    // add connection name column on pre-existing databases
-    const cols = this.db.query("PRAGMA table_info(connections)").all() as { name: string }[];
-    if (!cols.some((c) => c.name === "name")) {
-      this.db.run("ALTER TABLE connections ADD COLUMN name TEXT");
-    }
-    // add combo strategy column on pre-existing databases
-    const ccols = this.db.query("PRAGMA table_info(combos)").all() as { name: string }[];
-    if (!ccols.some((c) => c.name === "strategy")) {
-      this.db.run("ALTER TABLE combos ADD COLUMN strategy TEXT NOT NULL DEFAULT 'fallback'");
-    }
-    // RTK gain tracking columns on pre-existing databases
-    const ucols = this.db.query("PRAGMA table_info(usage_history)").all() as { name: string }[];
-    if (!ucols.some((c) => c.name === "rtk_saved")) {
-      this.db.run("ALTER TABLE usage_history ADD COLUMN rtk_saved INTEGER NOT NULL DEFAULT 0");
-      this.db.run("ALTER TABLE usage_history ADD COLUMN rtk_seen INTEGER NOT NULL DEFAULT 0");
-    }
+    runMigrations(this.db);
   }
 
   get raw() {
@@ -285,8 +218,8 @@ export class Store {
       created_at: string;
     }[];
     return rows.map((r) => {
-      const i = r.spec.indexOf("/");
-      return { spec: r.spec, provider: r.spec.slice(0, i), model: r.spec.slice(i + 1), created_at: r.created_at };
+      const { provider, model } = splitSpec(r.spec);
+      return { spec: r.spec, provider, model, created_at: r.created_at };
     });
   }
 
@@ -297,8 +230,8 @@ export class Store {
         "INSERT INTO models (spec, created_at) VALUES (?, ?) ON CONFLICT (spec) DO UPDATE SET spec = excluded.spec RETURNING created_at",
       )
       .get(spec, createdAt) as { created_at: string };
-    const i = spec.indexOf("/");
-    return { spec, provider: spec.slice(0, i), model: spec.slice(i + 1), created_at: row.created_at };
+    const { provider, model } = splitSpec(spec);
+    return { spec, provider, model, created_at: row.created_at };
   }
 
   deleteModel(spec: string) {

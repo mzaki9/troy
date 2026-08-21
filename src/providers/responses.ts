@@ -1,4 +1,5 @@
-import { type ChatDeps, handleChat } from "./route";
+import { type ChatDeps, handleChat } from "../proxy/route";
+import { sseTranslate } from "../proxy/stream";
 
 /**
  * /v1/responses bridge (Codex CLI, Feb 2026+ removed `wire_api = "chat"`).
@@ -395,38 +396,10 @@ export async function handleResponses(body: Record<string, unknown>, deps: ChatD
     done: false,
     usage: null,
   };
-  const encoder = new TextEncoder();
-  const decoder = new TextDecoder();
-  let buf = "";
-  const stream = new TransformStream<Uint8Array, Uint8Array>({
-    transform(chunk, controller) {
-      buf += decoder.decode(chunk, { stream: true });
-      for (let idx = buf.indexOf("\n"); idx >= 0; idx = buf.indexOf("\n")) {
-        const line = buf.slice(0, idx).trim();
-        buf = buf.slice(idx + 1);
-        if (!line.startsWith("data:")) continue;
-        const data = line.slice(5).trim();
-        if (data === "[DONE]") {
-          const events: Record<string, unknown>[] = [];
-          finish(st, events);
-          for (const e of events) controller.enqueue(encoder.encode(`data: ${JSON.stringify(e)}\n\n`));
-          return;
-        }
-        let ev: unknown;
-        try {
-          ev = JSON.parse(data);
-        } catch {
-          continue;
-        }
-        for (const e of chatChunkToEvents(ev, st)) controller.enqueue(encoder.encode(`data: ${JSON.stringify(e)}\n\n`));
-      }
-    },
-    flush(controller) {
-      const events: Record<string, unknown>[] = [];
-      finish(st, events);
-      for (const e of events) controller.enqueue(encoder.encode(`data: ${JSON.stringify(e)}\n\n`));
-    },
-  });
+  const stream = sseTranslate(
+    (ev) => chatChunkToEvents(ev, st),
+    (events) => finish(st, events),
+  );
   return new Response(res.body!.pipeThrough(stream), {
     status: 200,
     headers: { "content-type": "text/event-stream", "cache-control": "no-cache", "access-control-allow-origin": "*" },

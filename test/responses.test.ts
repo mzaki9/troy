@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chatChunkToEvents, type StreamState, toChatBody, toResponses } from "../src/responses";
+import { chatChunkToEvents, type StreamState, toChatBody, toResponses } from "../src/providers/responses";
 
 function newState(): StreamState {
   return {

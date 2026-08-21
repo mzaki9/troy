@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import type { StateEvent } from "../src/db";
-import { Store } from "../src/db";
-import { registerCustomProvider, unregisterCustomProvider } from "../src/registry";
-import { type ChatDeps, CooldownStore, handleChat, type LogRow, parseRetryAfter, takeHead } from "../src/route";
+import { CooldownStore, parseRetryAfter } from "../src/proxy/cooldown";
+import { registerCustomProvider, unregisterCustomProvider } from "../src/proxy/registry";
+import { type ChatDeps, handleChat, type LogRow } from "../src/proxy/route";
+import { takeHead } from "../src/proxy/stream";
+import type { StateEvent } from "../src/store/db";
+import { Store } from "../src/store/db";
 
 interface StubBehavior {
   status: number;

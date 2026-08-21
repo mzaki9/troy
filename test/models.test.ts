@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { Store } from "../src/db";
-import { EFFORT_ALIASES, isReasoningModel, resolveEffortAlias } from "../src/reasoning";
+import { EFFORT_ALIASES, isReasoningModel, resolveEffortAlias } from "../src/providers/reasoning";
+import { Store } from "../src/store/db";
 
 describe("isReasoningModel", () => {
   test("known reasoning families", () => {

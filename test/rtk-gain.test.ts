@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { Store } from "../src/db";
 import { compressMessages } from "../src/rtk";
+import { Store } from "../src/store/db";
 
 const lsOutput = (rows: number) =>
   Array.from({ length: rows }, (_, i) => `-rw-r--r--  1 u g ${1000 + i} Jan 01 10:00 file${i}.rs`).join("\n");

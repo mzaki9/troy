@@ -7,10 +7,11 @@ import {
   handleMessages,
   toAnthropic,
   toChatBody,
-} from "../src/anthropic";
-import { Store } from "../src/db";
-import { registerCustomProvider, unregisterCustomProvider } from "../src/registry";
-import { type ChatDeps, CooldownStore, type LogRow } from "../src/route";
+} from "../src/providers/anthropic";
+import { CooldownStore } from "../src/proxy/cooldown";
+import { registerCustomProvider, unregisterCustomProvider } from "../src/proxy/registry";
+import type { ChatDeps, LogRow } from "../src/proxy/route";
+import { Store } from "../src/store/db";
 
 describe("anthropic → chat translation", () => {
   test("system string becomes system message", () => {

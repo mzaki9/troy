@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { commandCodeReply, wrapCommandCode } from "../src/commandcode";
+import { commandCodeReply, wrapCommandCode } from "../src/providers/commandcode";
 
 function wrap(body: Record<string, unknown>): Record<string, any> {
   return wrapCommandCode(body).body as Record<string, any>;

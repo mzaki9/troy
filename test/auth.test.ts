@@ -7,8 +7,8 @@ import {
   newSessionToken,
   safeEqual,
   verifyPassword,
-} from "../src/auth";
-import { Store } from "../src/db";
+} from "../src/dash/auth";
+import { Store } from "../src/store/db";
 
 describe("troy api key auth", () => {
   test("extracts a Bearer token", () => {

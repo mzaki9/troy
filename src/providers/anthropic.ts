@@ -1,4 +1,5 @@
-import { type ChatDeps, handleChat } from "./route";
+import { type ChatDeps, handleChat } from "../proxy/route";
+import { sseTranslate } from "../proxy/stream";
 
 /**
  * /v1/messages bridge (Anthropic wire format — Claude Code & friends).
@@ -320,10 +321,6 @@ export function chatChunkToAnthropicEvents(raw: unknown, st: AnthropicState): Re
   return events;
 }
 
-function sse(event: Record<string, unknown>): Uint8Array {
-  return new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`);
-}
-
 /** Surface upstream/chat errors in the anthropic error envelope. */
 async function anthropicError(res: Response): Promise<Response> {
   const text = await res.text().catch(() => "");
@@ -363,36 +360,9 @@ export async function handleMessages(body: Record<string, unknown>, deps: ChatDe
     }
   }
   const st = freshState(String(chatBody.model));
-  const dec = new TextDecoder();
-  let buf = "";
-  const stream = new TransformStream<Uint8Array, Uint8Array>({
-    transform(chunk, controller) {
-      buf += dec.decode(chunk, { stream: true });
-      for (let idx = buf.indexOf("\n"); idx >= 0; idx = buf.indexOf("\n")) {
-        const line = buf.slice(0, idx).trim();
-        buf = buf.slice(idx + 1);
-        if (!line.startsWith("data:")) continue;
-        const data = line.slice(5).trim();
-        if (data === "[DONE]") {
-          const events: Record<string, unknown>[] = [];
-          finalize(st, events);
-          for (const e of events) controller.enqueue(sse(e));
-          return;
-        }
-        let ev: unknown;
-        try {
-          ev = JSON.parse(data);
-        } catch {
-          continue;
-        }
-        for (const e of chatChunkToAnthropicEvents(ev, st)) controller.enqueue(sse(e));
-      }
-    },
-    flush(controller) {
-      const events: Record<string, unknown>[] = [];
-      finalize(st, events);
-      for (const e of events) controller.enqueue(sse(e));
-    },
-  });
+  const stream = sseTranslate(
+    (ev) => chatChunkToAnthropicEvents(ev, st),
+    (events) => finalize(st, events),
+  );
   return new Response(res.body!.pipeThrough(stream), { status: 200, headers: sseHeaders });
 }
