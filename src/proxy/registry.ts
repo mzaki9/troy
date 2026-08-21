@@ -14,6 +14,10 @@ export interface Provider {
   headers?: Record<string, string>;
   /** Connection `data` keys that {placeholder} in baseUrl reads from. */
   placeholders?: string[];
+  /** Connection may store an empty key — the token is auto-discovered (CLI credentials file). */
+  autoToken?: boolean;
+  /** Static model catalog for providers without a live models endpoint. */
+  staticModels?: string[];
 }
 
 const httpref = { "HTTP-Referer": "https://troy.local", "X-Title": "troy" };
@@ -46,7 +50,12 @@ export const PROVIDERS: Provider[] = [
     modelsUrl: "https://api.commandcode.ai/provider/v1/models",
     auth: "bearer",
     headers: {
-      "x-command-code-version": "1.15.1",
+      // UA/JA3 coherence — exact identity of the real command-code CLI
+      // (command-code@1.26.0 bundle: user-agent `commandcode/0.1.0`,
+      // x-command-code-version = its package version). Never spoof Chrome on
+      // Bun TLS — Cloudflare flags the mismatch as a lying client.
+      "User-Agent": "commandcode/0.1.0",
+      "x-command-code-version": "1.26.0",
       "x-cli-environment": "external",
       "x-project-slug": "pi-cc",
       "x-taste-learning": "false",
@@ -176,6 +185,30 @@ export const PROVIDERS: Provider[] = [
     baseUrl: "https://opencode.ai/zen/go/v1/chat/completions",
     auth: "bearer",
   },
+  {
+    id: "freebuff",
+    aliases: ["freebuff", "fb"],
+    baseUrl: "https://codebuff.com/api/v1/chat/completions",
+    auth: "bearer",
+    headers: { "User-Agent": "ai-sdk/openai-compatible/1.0.0/codebuff" },
+    autoToken: true,
+    // ponytail: mirrors freebuff-proxy's ServedModels gate list — refresh when
+    // upstream retires/adds models (admission decides per token anyway)
+    staticModels: [
+      "deepseek/deepseek-v4-flash",
+      "deepseek/deepseek-v4-pro",
+      "mimo/mimo-v2.5",
+      "minimax/minimax-m3",
+      "openai/gpt-5.6-luna",
+      "z-ai/glm-5.2",
+      "anthropic/claude-fable-5",
+      "crof/kimi-k3-eco",
+      "meta/muse-spark-1.2-contributor",
+      "google/gemini-2.5-flash-lite",
+      "google/gemini-3.1-flash-lite",
+      "google/gemini-3.5-flash-lite",
+    ],
+  } /* FreeBuff free tier — CLI envelope + session bridge in providers/freebuff.ts; key = CLI login authToken (auto-discovered from ~/.config/manicode/credentials.json when the connection has no key) */,
   {
     id: "zai",
     aliases: ["zai", "glm", "z-ai"],

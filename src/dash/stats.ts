@@ -156,6 +156,7 @@ export function providerCatalog(store: Store): unknown[] {
       auth: p.auth,
       aliases: p.aliases,
       placeholders: p.placeholders ?? [],
+      autoToken: p.autoToken ?? false,
     };
   });
 }

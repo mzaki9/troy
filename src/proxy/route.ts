@@ -1,15 +1,33 @@
 import { enrich } from "../modelsdev";
 import { commandCodeReply, wrapCommandCode } from "../providers/commandcode";
+import {
+  classifyFreebuffError,
+  discoverFreebuffToken,
+  ensureFreebuffSession,
+  freebuffJsonReply,
+  invalidateFreebuff,
+  wrapFreebuff,
+} from "../providers/freebuff";
 import { type CavemanLevel, injectCaveman, injectPonytail, type PonytailLevel } from "../providers/inject";
 import { isReasoningModel, resolveEffortAlias } from "../providers/reasoning";
 import { compressMessages } from "../rtk";
 import type { Connection, Store } from "../store/db";
 import { type CooldownStore, parseRetryAfter } from "./cooldown";
 import { getProvider, inferProvider, type Provider } from "./registry";
-import { endMark, idleGuard, normalizeTokens, passthrough, readBody, scanUsage, takeHead, usageOf } from "./stream";
+import {
+  endMark,
+  idleGuard,
+  normalizeTokens,
+  passthrough,
+  readBody,
+  STREAM_IDLE_MS,
+  scanUsage,
+  takeHead,
+  UPSTREAM_TIMEOUT_MS,
+  usageOf,
+  withDeadline,
+} from "./stream";
 
-/** upstream streams silent longer than this are cut with an SSE error frame */
-const STREAM_IDLE_TIMEOUT_MS = Math.max(1000, Number(process.env.TROY_STREAM_IDLE_MS ?? 300_000));
 /** per-account in-flight cap — one hot account may not eat all parallelism */
 const MAX_INFLIGHT_PER_CONN = Math.max(1, Number(process.env.TROY_MAX_INFLIGHT ?? 10));
 const inflight = new Map<string, number>();
@@ -110,7 +128,7 @@ async function forward(
   wantsStream = false,
 ): Promise<Response> {
   const headers: Record<string, string> = { "content-type": "application/json", ...authHeaders(def, conn) };
-  if (wantsStream || def.id === "command-code") headers.accept = "text/event-stream";
+  if (wantsStream || def.id === "command-code" || def.id === "freebuff") headers.accept = "text/event-stream";
   if (def.id === "command-code") headers["x-session-id"] = crypto.randomUUID();
   return fetch(buildBaseUrl(def, conn), {
     method: "POST",
@@ -206,6 +224,8 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
     const effBodyStr = JSON.stringify(effBody);
     // command-code speaks the alpha/generate wire format, not chat completions
     const cc = def.id === "command-code";
+    // freebuff speaks chat completions but needs the CLI envelope + a free session
+    const fb = def.id === "freebuff";
     const wrapped = cc ? wrapCommandCode(effBody) : null;
     const bodyJson = wrapped ? JSON.stringify(wrapped.body) : effBodyStr;
     let accounts = deps.store.listConnections(provider);
@@ -255,16 +275,48 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
       const load = (c: Connection) => inflight.get(c.id) ?? 0;
       const free = eligible.filter((c) => load(c) < MAX_INFLIGHT_PER_CONN);
       const pool = free.length > 0 ? free : [eligible.reduce((a, b) => (load(a) <= load(b) ? a : b))];
-      const conn = deps.cooldowns.pick(pool, `${provider}/${model}`, deps.strategy);
+      let conn = deps.cooldowns.pick(pool, `${provider}/${model}`, deps.strategy);
       deps.onTrace?.(
         `→ ${provider}/${model} via ${conn.name ?? conn.id.slice(0, 8)}${combo ? ` [combo ${combo.name}]` : ""}`,
       );
+
+      // freebuff: ensure the free session, then wrap the body in the CLI envelope
+      let fbJson: string | null = null;
+      if (fb) {
+        try {
+          if (!conn.api_key) {
+            // keyless connection → ride the official CLI's login token
+            const token = discoverFreebuffToken();
+            if (!token) throw new Error("no freebuff token — set a key or log in via the FreeBuff/Codebuff CLI");
+            conn = { ...conn, api_key: token };
+          }
+          const origin = new URL(buildBaseUrl(def, conn)).origin;
+          const sess = await ensureFreebuffSession(origin, conn, model);
+          const enveloped = wrapFreebuff(effBody, {
+            runId: crypto.randomUUID(),
+            instanceId: sess.instanceId || undefined,
+          });
+          fbJson = JSON.stringify(enveloped);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "freebuff session failed";
+          const ra = (err as { retryAfterMs?: number }).retryAfterMs;
+          deps.cooldowns.fail(conn.id, model, 0, msg, circuitKey, typeof ra === "number" ? ra : undefined);
+          lastError = msg;
+          lastStatus = 502;
+          excluded.add(conn.id);
+          continue;
+        }
+      }
 
       inflight.set(conn.id, (inflight.get(conn.id) ?? 0) + 1);
       try {
         let res: Response;
         try {
-          res = await forward(bodyJson, conn, def, deps.signal, effBody.stream === true);
+          // Bun's fetch resolves at first body byte, so this deadline is the
+          // TTFB guard: streams/CC must show life within one idle gap,
+          // non-stream gets the generous whole-request ceiling.
+          const ttfb = effBody.stream === true || cc ? STREAM_IDLE_MS : UPSTREAM_TIMEOUT_MS;
+          res = await withDeadline(forward(fbJson ?? bodyJson, conn, def, deps.signal, effBody.stream === true), ttfb);
         } catch (err) {
           const msg = err instanceof Error ? err.message : "network error";
           deps.cooldowns.fail(conn.id, model, 0, msg, circuitKey);
@@ -293,10 +345,24 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
               }),
             );
           }
+          // freebuff always streams upstream — buffer SSE into a chat.completion JSON body
+          if (fb && !stream) {
+            deps.cooldowns.success(conn.id, model, circuitKey);
+            try {
+              return await freebuffJsonReply(res);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : "freebuff stream error";
+              deps.cooldowns.fail(conn.id, model, 0, msg, circuitKey);
+              lastError = msg;
+              lastStatus = 502;
+              excluded.add(conn.id);
+              continue;
+            }
+          }
           if (!stream) {
             // buffer JSON bodies — dead/empty/oversize upstreams fall through to
             // the next account instead of forwarding a broken payload
-            const full = await readBody(res);
+            const full = await withDeadline(readBody(res), UPSTREAM_TIMEOUT_MS);
             if (full.error) {
               deps.cooldowns.fail(conn.id, model, 0, full.error, circuitKey);
               lastError = full.error;
@@ -342,7 +408,7 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
           let tokens: Record<string, number> | undefined;
           // ponytail: slot frees at handoff, not stream end — move the release
           // into endMark if per-account accounting must cover full stream duration
-          const guarded = idleGuard(head.res.body!, STREAM_IDLE_TIMEOUT_MS);
+          const guarded = idleGuard(head.res.body!, STREAM_IDLE_MS);
           const scanned = guarded.pipeThrough(scanUsage((u) => (tokens = normalizeTokens(u))));
           const logged = endMark(scanned, () =>
             deps.onLog({
@@ -361,13 +427,16 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
 
         const bodyText = await res.text().catch(() => "");
         if (cc) lastRaw = { body: bodyText, status: res.status };
+        // freebuff: typed classification → session invalidation + server retry hints
+        const fbErr = fb ? classifyFreebuffError(res.status, bodyText) : null;
+        if (fbErr?.invalidate) invalidateFreebuff(conn.id);
         deps.cooldowns.fail(
           conn.id,
           model,
           res.status,
-          bodyText,
+          fbErr?.reason ? `${fbErr.reason} — ${bodyText}`.slice(0, 300) : bodyText,
           circuitKey,
-          parseRetryAfter(res.headers.get("retry-after")),
+          fbErr ? fbErr.retryAfterMs : parseRetryAfter(res.headers.get("retry-after")),
         );
         lastError = bodyText || res.statusText || `HTTP ${res.status}`;
         lastStatus = res.status;

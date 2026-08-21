@@ -1,6 +1,28 @@
 // hoisted hot-path constants: no per-request RegExp/TextEncoder allocation
 export const ENC = new TextEncoder();
 
+/** upstream silence (before first byte or between chunks) longer than this is
+ *  cut — flowing tokens arrive in seconds; a long silence means dead, not slow.
+ *  Thinking models stream reasoning deltas, so legit gaps stay far below this. */
+export const STREAM_IDLE_MS = Math.max(1000, Number(process.env.TROY_STREAM_IDLE_MS ?? 60_000));
+/** whole-request ceiling for non-stream upstream calls — generous so slow
+ *  reasoning generations finish; hung TCP dies here instead of never. Streams
+ *  are exempt: their health is judged by STREAM_IDLE_MS gaps, not total time. */
+export const UPSTREAM_TIMEOUT_MS = Math.max(1000, Number(process.env.TROY_UPSTREAM_TIMEOUT_MS ?? 300_000));
+
+/** Reject if `p` hasn't settled within `ms`. Used for connect/TTFB deadlines —
+ *  clearing happens in the caller's finally, so resolved promises (and their
+ *  bodies) are never touched by the timer. */
+export function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    p,
+    new Promise<never>((_, rej) => {
+      timer = setTimeout(() => rej(new Error(`upstream sent nothing within ${ms}ms`)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 type Chunk = { value: Uint8Array; done: false } | { value?: undefined; done: true };
 
 export function passthrough(res: Response, stream: boolean): Response {
@@ -82,18 +104,29 @@ export async function readBody(res: Response): Promise<{ text: string | null; er
 /** Consume the first chunk of a streaming response and hand back a replayable
  *  body. A 200 whose body dies before emitting anything becomes a failure so
  *  the walk continues; mid-stream death surfaces one SSE error frame and fires
- *  `onMidstreamFail` so the caller can cool the account down. */
+ *  `onMidstreamFail` so the caller can cool the account down. The first byte
+ *  must arrive within `firstByteMs` (default STREAM_IDLE_MS) or the response
+ *  is a failure — headers-then-nothing is a hang, not a slow provider. */
 export async function takeHead(
   res: Response,
   stream: boolean,
   onMidstreamFail?: (message: string) => void,
+  firstByteMs: number = STREAM_IDLE_MS,
 ): Promise<{ res: Response; error: string | null }> {
   const reader = res.body!.getReader();
   let first: Chunk;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    first = await reader.read();
+    first = await Promise.race([
+      reader.read(),
+      new Promise<never>((_, rej) => {
+        timer = setTimeout(() => rej(new Error(`no first byte within ${firstByteMs}ms`)), firstByteMs);
+      }),
+    ]);
   } catch (e) {
     return { res, error: e instanceof Error ? e.message : "upstream connection reset" };
+  } finally {
+    clearTimeout(timer);
   }
   if (first.done) return { res, error: "upstream returned an empty body" };
 

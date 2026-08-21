@@ -322,7 +322,12 @@ function ProviderDetail({ id, onBack }: { id: string; onBack: () => void }) {
         </CardContent>
 
         <div className="flex justify-end border-t px-8 pt-6">
-          <AddKeyDialog providerId={id} placeholderKeys={placeholderKeys} onAdded={refetchAll} />
+          <AddKeyDialog
+            providerId={id}
+            placeholderKeys={placeholderKeys}
+            autoToken={p?.autoToken}
+            onAdded={refetchAll}
+          />
         </div>
       </Card>
 
@@ -489,10 +494,12 @@ function ModelsCard({ providerId, refresh = 0 }: { providerId: string; refresh?:
 function AddKeyDialog({
   providerId,
   placeholderKeys,
+  autoToken,
   onAdded,
 }: {
   providerId: string;
   placeholderKeys: string[];
+  autoToken?: boolean;
   onAdded: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -502,10 +509,26 @@ function AddKeyDialog({
   const [extras, setExtras] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [cliHint, setCliHint] = useState<string | null>(null);
+
+  const fetchCli = async () => {
+    setCliHint(null);
+    try {
+      const r = await api<{ token: string }>(`/api/providers/${providerId}/cli-token`);
+      if (r.token) {
+        setKey(r.token);
+        setCliHint("token fetched from CLI login");
+      } else {
+        setCliHint("no CLI login found — log in via the FreeBuff/Codebuff CLI first");
+      }
+    } catch (e) {
+      setCliHint(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!key.trim()) return;
+    if (!key.trim() && !autoToken) return;
     setBusy(true);
     setErr(null);
     try {
@@ -567,8 +590,26 @@ function AddKeyDialog({
             </div>
           ))}
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="akKey">api key</Label>
-            <Input id="akKey" value={key} onChange={(e) => setKey(e.target.value)} placeholder="sk-..." required />
+            <div className="flex items-center justify-between">
+              <Label htmlFor="akKey">api key</Label>
+              {autoToken ? (
+                <Button type="button" variant="ghost" size="sm" className="h-5 px-2 text-[11px]" onClick={fetchCli}>
+                  fetch from CLI login
+                </Button>
+              ) : null}
+            </div>
+            <Input
+              id="akKey"
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              placeholder={autoToken ? "empty = auto-discover from CLI login" : "sk-..."}
+              required={!autoToken}
+            />
+            {autoToken ? (
+              <p className="text-[11px] text-muted-foreground">
+                {cliHint ?? "Leave empty to ride the CLI login at request time, or fetch/paste a token to store it."}
+              </p>
+            ) : null}
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="akPrio">priority</Label>
@@ -577,7 +618,7 @@ function AddKeyDialog({
           {err ? <p className="text-xs text-red-600 dark:text-red-400">{err}</p> : null}
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <Button type="submit" disabled={!key.trim() || busy}>
+            <Button type="submit" disabled={(!key.trim() && !autoToken) || busy}>
               add key
             </Button>
           </AlertDialogFooter>

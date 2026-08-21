@@ -97,6 +97,8 @@ export interface ProviderCat {
   auth: string;
   aliases: string[];
   placeholders: string[];
+  /** empty key allowed — token comes from the CLI credentials file at request time */
+  autoToken?: boolean;
 }
 export interface ApiKeyInfo {
   key: string;

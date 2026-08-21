@@ -274,6 +274,28 @@ describe("streaming failover + usage capture", () => {
     expect(second.status).toBe(503);
   });
 
+  test("first-byte hang: headers-then-nothing fails within the deadline", async () => {
+    // manual Response — Bun's fetch wouldn't even resolve on a silent body
+    const res = new Response(new ReadableStream({ start() {} }), {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    });
+    const head = await takeHead(res, true, undefined, 50);
+    expect(head.error).toContain("no first byte within 50ms");
+    // a healthy stream passes the same deadline untouched
+    const ok = new Response(
+      new ReadableStream({
+        async start(c) {
+          await new Promise((r) => setTimeout(r, 10));
+          c.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{}}]}\n\n'));
+        },
+      }),
+      { status: 200 },
+    );
+    const good = await takeHead(ok, true, undefined, 500);
+    expect(good.error).toBeNull();
+  });
+
   test("empty 200 body falls through (non-stream)", async () => {
     behaviors.set("good", { status: 200, body: JSON.stringify({ ok: true }) });
     const ctx = makeDeps();

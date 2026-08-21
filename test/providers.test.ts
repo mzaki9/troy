@@ -16,6 +16,13 @@ const stub = Bun.serve({
     });
     lastReq = { url: req.url, headers };
     await req.text();
+    // freebuff: the envelope bridge admits a session before the chat call
+    if (new URL(req.url).pathname === "/api/v1/freebuff/session") {
+      return new Response(JSON.stringify({ status: "active", instanceId: "stub", expiresAt: Date.now() + 60_000 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
     return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
   },
 });
