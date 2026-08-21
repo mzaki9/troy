@@ -50,10 +50,20 @@ export interface StatRow {
   ok: number;
   avg_ms: number;
   last?: string;
+  tokens_in?: number;
+  tokens_out?: number;
 }
 export interface StatsData {
-  totals: { requests: number; ok: number; fail: number; avg_ms: number; p95_ms: number };
-  byProvider: { provider: string; n: number; ok: number; av: number }[];
+  totals: {
+    requests: number;
+    ok: number;
+    fail: number;
+    avg_ms: number;
+    p95_ms: number;
+    tokens_in: number;
+    tokens_out: number;
+  };
+  byProvider: { provider: string; n: number; ok: number; av: number; tokens_in?: number; tokens_out?: number }[];
   byModel: StatRow[];
 }
 export interface DailyRow {
@@ -69,6 +79,7 @@ export interface LogRow {
   model: string;
   status: string;
   latency_ms: number;
+  tokens?: Record<string, number>;
 }
 export interface ProviderCat {
   id: string;

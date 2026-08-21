@@ -15,6 +15,15 @@ function EmptyState({ msg }: { msg: string }) {
   return <p className="py-10 text-center text-sm text-muted-foreground">{msg}</p>;
 }
 
+/** compact token counts: 940 → "940", 12_300 → "12.3k", 5_600_000 → "5.6M" */
+function tok(n: number | undefined): string {
+  if (!n) return "0";
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
+  return String(n);
+}
+
 function ModelCode({ model }: { model: string }) {
   return <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">{model}</code>;
 }
@@ -202,6 +211,7 @@ function RequestsTable({ rows, limit }: { rows?: LogRow[]; limit: number }) {
           <TableHead className="text-[11px] font-normal tracking-[0.08em] uppercase">provider</TableHead>
           <TableHead className="text-[11px] font-normal tracking-[0.08em] uppercase">model</TableHead>
           <TableHead className="text-[11px] font-normal tracking-[0.08em] uppercase">status</TableHead>
+          <TableHead className="text-[11px] font-normal tracking-[0.08em] uppercase text-right">tokens</TableHead>
           <TableHead className="text-[11px] font-normal tracking-[0.08em] uppercase text-right">ms</TableHead>
         </TableRow>
       </TableHeader>
@@ -222,6 +232,9 @@ function RequestsTable({ rows, limit }: { rows?: LogRow[]; limit: number }) {
               )}
             >
               {r.status}
+            </TableCell>
+            <TableCell className="text-right font-mono text-xs tabular-nums text-muted-foreground">
+              {r.tokens ? `${tok(r.tokens.prompt_tokens)} / ${tok(r.tokens.completion_tokens)}` : "—"}
             </TableCell>
             <TableCell className="text-right font-mono tabular-nums">{r.latency_ms}</TableCell>
           </TableRow>
@@ -250,6 +263,7 @@ function ModelTable({ rows }: { rows?: StatRow[] }) {
           <TableHead className="text-[11px] font-normal tracking-[0.08em] uppercase">provider</TableHead>
           <TableHead className="text-[11px] font-normal tracking-[0.08em] uppercase text-right">requests</TableHead>
           <TableHead className="text-[11px] font-normal tracking-[0.08em] uppercase text-right">ok</TableHead>
+          <TableHead className="text-[11px] font-normal tracking-[0.08em] uppercase text-right">tokens</TableHead>
           <TableHead className="text-[11px] font-normal tracking-[0.08em] uppercase text-right">avg ms</TableHead>
           <TableHead className="text-[11px] font-normal tracking-[0.08em] uppercase">last used</TableHead>
         </TableRow>
@@ -263,6 +277,9 @@ function ModelTable({ rows }: { rows?: StatRow[] }) {
             <TableCell>{r.provider}</TableCell>
             <TableCell className="text-right font-mono tabular-nums">{fmt.format(r.requests)}</TableCell>
             <TableCell className="text-right font-mono tabular-nums">{fmt.format(r.ok)}</TableCell>
+            <TableCell className="text-right font-mono text-xs tabular-nums text-muted-foreground">
+              {r.tokens_in || r.tokens_out ? `${tok(r.tokens_in)} / ${tok(r.tokens_out)}` : "—"}
+            </TableCell>
             <TableCell className="text-right font-mono tabular-nums">{short(r.avg_ms)}</TableCell>
             <TableCell className="text-muted-foreground">{lastUsed(r.last ?? "")}</TableCell>
           </TableRow>
@@ -333,7 +350,7 @@ export function UsagePage() {
       </TabsList>
 
       <TabsContent value="overview" className="view-switch space-y-4">
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
           {!t ? (
             <StatSkeletons />
           ) : (
@@ -352,6 +369,7 @@ export function UsagePage() {
               />
               <StatCard label="Avg latency" value={t.requests ? short(t.avg_ms) : "—"} />
               <StatCard label="p95 latency" value={t.requests ? short(t.p95_ms) : "—"} />
+              <StatCard label="Tokens" value={`${tok(t.tokens_in)} / ${tok(t.tokens_out)}`} sub="in / out" />
             </>
           )}
         </div>
