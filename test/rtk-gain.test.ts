@@ -31,6 +31,16 @@ describe("rtk gain tracking", () => {
     expect(stat.seen).toBe(0);
   });
 
+  test("many plain lines with no known shape → smart-truncated", () => {
+    const lines = Array.from({ length: 400 }, (_, i) => `plain log line number ${i} with some words`);
+    const body = { messages: [{ role: "tool", content: lines.join("\n") }] };
+    const before = (body.messages[0] as { content: string }).content.length;
+    const stat = compressMessages(body);
+    expect(stat.seen).toBe(before);
+    expect(stat.saved).toBeGreaterThan(0);
+    expect((body.messages[0] as { content: string }).content).toContain("lines truncated");
+  });
+
   test("failed shrink counts as seen but not saved (honest ratio)", () => {
     // path-like lines pass the find-detector; a single line cannot shrink further,
     // so safeApply keeps the original — seen must still have counted it

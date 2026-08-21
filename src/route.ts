@@ -25,6 +25,11 @@ const MAX_INFLIGHT_PER_CONN = Math.max(1, Number(process.env.TROY_MAX_INFLIGHT ?
 const inflight = new Map<string, number>();
 const COMBO_STRATEGIES = new Set(["fallback", "random", "round-robin"]);
 
+// hoisted hot-path constants: no per-request RegExp/TextEncoder allocation
+const RE_DIGITS = /^\d+$/;
+const RE_PLACEHOLDER = /\{(\w+)\}/g;
+const ENC = new TextEncoder();
+
 const ERROR_TEXT_BACKOFF = ["rate limit", "too many requests", "capacity", "overloaded"];
 
 /** Balance/quota exhaustion — a dead account does not recover by retrying, so it
@@ -173,6 +178,9 @@ export class CooldownStore {
     if (s.locks.size === 0) {
       s.backoff = 0;
       this.reasons.delete(`${id}|${key}`);
+      this.reasons.delete(`${id}|*`);
+      // drop the shell entirely — states must not grow with every account ever seen
+      if (s.until <= now()) this.states.delete(id);
     }
     // half-open probe succeeded → close the circuit
     this.circuits.delete(circuitKey);
@@ -191,10 +199,11 @@ export class CooldownStore {
 
   earliestRetryAfter(): number | null {
     let earliest: number | null = null;
-    for (const [, s] of this.states) {
-      for (const until of [s.until, ...s.locks.values()]) {
-        if (until <= now()) continue;
-        if (earliest === null || until < earliest) earliest = until;
+    const t = now();
+    for (const s of this.states.values()) {
+      if (s.until > t && (earliest === null || s.until < earliest)) earliest = s.until;
+      for (const until of s.locks.values()) {
+        if (until > t && (earliest === null || until < earliest)) earliest = until;
       }
     }
     return earliest;
@@ -237,7 +246,7 @@ function classify(
   backoffLevel = 0,
 ): { kind: FailKind; cooldownMs: number; newBackoffLevel: number } {
   const lower = String(errText ?? "").toLowerCase();
-  if (/request not allowed/.test(lower))
+  if (lower.includes("request not allowed"))
     return { kind: "short", cooldownMs: COOLDOWN_SHORT_MS, newBackoffLevel: backoffLevel };
   // quota/balance death: long lock, NO backoff escalation — retrying sooner never helps
   if (status === 402 || QUOTA_TEXT.some((r) => lower.includes(r)))
@@ -264,7 +273,7 @@ function backoffDelay(level: number): number {
 export function parseRetryAfter(v: string | null): number | null {
   if (!v) return null;
   const s = v.trim();
-  if (/^\d+$/.test(s)) return Number(s) * 1000;
+  if (RE_DIGITS.test(s)) return Number(s) * 1000;
   const d = Date.parse(s);
   return Number.isNaN(d) ? null : Math.max(0, d - now());
 }
@@ -328,8 +337,10 @@ function parseModelStr(spec: string): { provider: string; model: string } {
 /** Fisher-Yates shuffle — random chain strategy. */
 function shuffle<T>(arr: T[]): T[] {
   const out = [...arr];
+  const rand = new Uint32Array(out.length);
+  crypto.getRandomValues(rand);
   for (let i = out.length - 1; i > 0; i--) {
-    const j = Math.floor((crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32) * (i + 1));
+    const j = Math.floor((rand[i] / 2 ** 32) * (i + 1));
     [out[i], out[j]] = [out[j], out[i]];
   }
   return out;
@@ -347,7 +358,7 @@ export function buildBaseUrl(def: Provider, conn: Connection): string {
   const base = conn.base_url ?? def.baseUrl;
   if (!def.placeholders) return base;
   const extra = safeExtra(conn);
-  return base.replace(/\{(\w+)\}/g, (_, k: string) => String(extra[k] ?? ""));
+  return base.replace(RE_PLACEHOLDER, (_, k: string) => String(extra[k] ?? ""));
 }
 
 function passthrough(res: Response, stream: boolean): Response {
@@ -440,7 +451,7 @@ export async function takeHead(res: Response, stream: boolean): Promise<{ res: R
     return { res, error: e instanceof Error ? e.message : "upstream connection reset" };
   }
   if (first.done) return { res, error: "upstream returned an empty body" };
-  const enc = new TextEncoder();
+
   let opened = false;
   const body = new ReadableStream<Uint8Array>({
     start(c) {
@@ -454,7 +465,7 @@ export async function takeHead(res: Response, stream: boolean): Promise<{ res: R
       } catch (e) {
         if (stream && opened) {
           c.enqueue(
-            enc.encode(
+            ENC.encode(
               `data: ${JSON.stringify({
                 error: {
                   message: e instanceof Error ? e.message : "upstream connection lost mid-stream",
@@ -547,7 +558,7 @@ function endMark(body: ReadableStream<Uint8Array>, onEnd: () => void): ReadableS
  *  that takeHead's first-chunk guard cannot see. */
 function idleGuard(body: ReadableStream<Uint8Array>, ms: number): ReadableStream<Uint8Array> {
   const reader = body.getReader();
-  const enc = new TextEncoder();
+
   return new ReadableStream<Uint8Array>({
     async pull(c) {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -560,7 +571,7 @@ function idleGuard(body: ReadableStream<Uint8Array>, ms: number): ReadableStream
         ]);
         if (n === "idle") {
           c.enqueue(
-            enc.encode(
+            ENC.encode(
               `data: ${JSON.stringify({
                 error: { message: `upstream idle for over ${ms}ms`, type: "server_error", code: "timeout" },
               })}\n\n`,
@@ -588,21 +599,22 @@ function idleGuard(body: ReadableStream<Uint8Array>, ms: number): ReadableStream
 }
 
 async function forward(
-  body: Record<string, unknown>,
+  bodyJson: string,
   conn: Connection,
   def: Provider,
   signal?: AbortSignal,
+  wantsStream = false,
 ): Promise<Response> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (def.auth === "bearer") headers.authorization = `Bearer ${conn.api_key}`;
   else if (def.auth === "raw") headers["x-api-key"] = conn.api_key;
-  if (body.stream || def.id === "command-code") headers.accept = "text/event-stream";
+  if (wantsStream || def.id === "command-code") headers.accept = "text/event-stream";
   for (const [k, v] of Object.entries(def.headers ?? {})) headers[k] = v;
   if (def.id === "command-code") headers["x-session-id"] = crypto.randomUUID();
   return fetch(buildBaseUrl(def, conn), {
     method: "POST",
     headers,
-    body: JSON.stringify(body),
+    body: bodyJson,
     signal,
     redirect: "follow",
   });
@@ -687,6 +699,12 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
     if (effBody.stream === true && !effBody.stream_options) {
       effBody.stream_options = { include_usage: true };
     }
+    // serialize ONCE per chain member — retries across accounts reuse the bytes
+    const effBodyStr = JSON.stringify(effBody);
+    // command-code speaks the alpha/generate wire format, not chat completions
+    const cc = def.id === "command-code";
+    const wrapped = cc ? wrapCommandCode(effBody) : null;
+    const bodyJson = wrapped ? JSON.stringify(wrapped.body) : effBodyStr;
     let accounts = deps.store.listConnections(provider);
     if (def.auth === "none" && accounts.length === 0) {
       // keyless providers (opencode zen free tier) need no stored key — route without one
@@ -735,15 +753,11 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
       const pool = free.length > 0 ? free : [eligible.reduce((a, b) => (load(a) <= load(b) ? a : b))];
       const conn = deps.cooldowns.pick(pool, `${provider}/${model}`, deps.strategy);
 
-      // command-code speaks the alpha/generate wire format, not chat completions
-      const cc = def.id === "command-code";
-      const wrapped = cc ? wrapCommandCode(effBody) : null;
-
       inflight.set(conn.id, (inflight.get(conn.id) ?? 0) + 1);
       try {
         let res: Response;
         try {
-          res = await forward(wrapped?.body ?? effBody, conn, def, deps.signal);
+          res = await forward(bodyJson, conn, def, deps.signal, effBody.stream === true);
         } catch (err) {
           const msg = err instanceof Error ? err.message : "network error";
           deps.cooldowns.fail(conn.id, model, 0, msg, circuitKey);
@@ -843,7 +857,10 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
         lastStatus = res.status;
         excluded.add(conn.id);
       } finally {
-        inflight.set(conn.id, Math.max(0, (inflight.get(conn.id) ?? 1) - 1));
+        const n = (inflight.get(conn.id) ?? 1) - 1;
+        // key deleted at zero — the map must not grow with every account ever used
+        if (n <= 0) inflight.delete(conn.id);
+        else inflight.set(conn.id, n);
       }
     }
   }

@@ -270,14 +270,24 @@ function lookupProvider(provider: string, rest: string): ProviderModel | undefin
 
 // ---- resolution -------------------------------------------------------------
 
-/** capability layers that may be served; TROY_ENRICH="" disables all extras */
+/** capability layers that may be served; TROY_ENRICH="" disables all extras.
+ *  Cached per env value — no Set rebuild on the enrich() hot path, but a
+ *  runtime env change (tests) still takes effect. */
+let layersCache: { env: string | undefined; set: Set<string> } | null = null;
 function enabledLayers(): Set<string> {
-  return new Set(
-    (process.env.TROY_ENRICH ?? "limits,modalities")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean),
-  );
+  const env = process.env.TROY_ENRICH;
+  if (!layersCache || layersCache.env !== env) {
+    layersCache = {
+      env,
+      set: new Set(
+        (env ?? "limits,modalities")
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
+      ),
+    };
+  }
+  return layersCache.set;
 }
 
 const KNOWN_INPUTS = new Set(["text", "image", "video", "pdf", "audio"]);

@@ -413,15 +413,22 @@ export class Store {
   flushLogs() {
     if (this.logQueue.length === 0 && !this.lastTrim) return;
     const batch = this.logQueue.splice(0, this.logQueue.length);
-    this.db.transaction(() => {
-      for (const row of batch) {
-        this.db
-          .query(
-            "INSERT INTO usage_history (ts, provider, model, combo, status, latency_ms, tokens, rtk_saved, rtk_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          )
-          .run(...row);
-      }
-    })();
+    try {
+      this.db.transaction(() => {
+        for (const row of batch) {
+          this.db
+            .query(
+              "INSERT INTO usage_history (ts, provider, model, combo, status, latency_ms, tokens, rtk_saved, rtk_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .run(...row);
+        }
+      })();
+    } catch {
+      // put the batch back so a transient lock/IO error doesn't silently drop
+      // usage rows — bounded so a persistent failure can't grow memory forever
+      const kept = batch.slice(-10_000);
+      this.logQueue.unshift(...kept);
+    }
     // bound the table so stats scans stay cheap forever
     if (!this.lastTrim || Date.now() - this.lastTrim > 3600_000) {
       this.lastTrim = Date.now();

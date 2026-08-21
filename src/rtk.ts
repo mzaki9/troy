@@ -269,8 +269,15 @@ function autoDetectFilter(text: string): ((t: string) => string) | null {
   if (RE_LS_TOTAL.test(head)) return ls;
   const lsRows = head.split("\n").filter((l) => RE_LS_ROW.test(l));
   if (lsRows.length >= 3) return ls;
-  if (text.split("\n").length >= SMART_TRUNCATE_MIN_LINES) return smartTruncate;
+  if (countLines(text) >= SMART_TRUNCATE_MIN_LINES) return smartTruncate;
   return null;
+}
+
+/** count '\n' without allocating a line array — multi-MB tool outputs land here */
+function countLines(text: string): number {
+  let n = 1;
+  for (let i = text.indexOf("\n"); i !== -1; i = text.indexOf("\n", i + 1)) n++;
+  return n;
 }
 
 function safeApply(fn: (t: string) => string, text: string): string {
