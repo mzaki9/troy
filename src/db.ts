@@ -392,7 +392,19 @@ export class Store {
   }
 
   listLogs(limit = 50) {
-    return this.db.query("SELECT * FROM usage_history ORDER BY ts DESC LIMIT ?").all(limit);
+    const rows = this.db.query("SELECT * FROM usage_history ORDER BY ts DESC LIMIT ?").all(limit) as {
+      tokens?: string;
+    }[];
+    return rows.map((r) => {
+      // tokens is stored as JSON text — hand it to clients as an object,
+      // otherwise every r.tokens.prompt_tokens read lands on a string
+      if (typeof r.tokens !== "string") return { ...r, tokens: undefined };
+      try {
+        return { ...r, tokens: JSON.parse(r.tokens) };
+      } catch {
+        return { ...r, tokens: undefined };
+      }
+    });
   }
 
   /**
