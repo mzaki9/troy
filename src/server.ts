@@ -1,5 +1,6 @@
 import { mkdirSync } from "node:fs";
 import type { Server } from "bun";
+import { handleMessages } from "./anthropic";
 import {
   DEFAULT_DASHBOARD_PASS,
   extractApiKey,
@@ -155,6 +156,8 @@ interface StatRow {
   ok: number;
   av: number;
   last: string;
+  tin: number | null;
+  tout: number | null;
 }
 
 const STATUS_OK = "200 OK";
@@ -162,7 +165,7 @@ const STATUS_OK = "200 OK";
 function stats(): unknown {
   const byModel = store.raw
     .query(
-      "SELECT provider, model, COUNT(*) n, SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) ok, AVG(latency_ms) av, MAX(ts) last FROM usage_history GROUP BY model, provider ORDER BY n DESC LIMIT 500",
+      "SELECT provider, model, COUNT(*) n, SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) ok, AVG(latency_ms) av, MAX(ts) last, SUM(json_extract(tokens, '$.prompt_tokens')) tin, SUM(json_extract(tokens, '$.completion_tokens')) tout FROM usage_history GROUP BY model, provider ORDER BY n DESC LIMIT 500",
     )
     .all(STATUS_OK) as unknown as StatRow[];
   const lats = (
@@ -175,22 +178,43 @@ function stats(): unknown {
   let n = 0;
   let ok = 0;
   let w = 0;
-  const prov = new Map<string, { n: number; ok: number; w: number }>();
+  let tin = 0;
+  let tout = 0;
+  const prov = new Map<string, { n: number; ok: number; w: number; tin: number; tout: number }>();
   for (const r of byModel) {
     n += r.n;
     ok += r.ok;
     w += r.n * r.av;
-    const p = prov.get(r.provider) ?? { n: 0, ok: 0, w: 0 };
+    tin += r.tin ?? 0;
+    tout += r.tout ?? 0;
+    const p = prov.get(r.provider) ?? { n: 0, ok: 0, w: 0, tin: 0, tout: 0 };
     p.n += r.n;
     p.ok += r.ok;
     p.w += r.n * r.av;
+    p.tin += r.tin ?? 0;
+    p.tout += r.tout ?? 0;
     prov.set(r.provider, p);
   }
   const byProvider = [...prov.entries()]
-    .map(([provider, p]) => ({ provider, n: p.n, ok: p.ok, av: p.w / p.n }))
+    .map(([provider, p]) => ({
+      provider,
+      n: p.n,
+      ok: p.ok,
+      av: p.w / p.n,
+      tokens_in: p.tin,
+      tokens_out: p.tout,
+    }))
     .sort((a, b) => b.n - a.n);
   return {
-    totals: { requests: n, ok, fail: n - ok, avg_ms: n ? Math.round(w / n) : 0, p95_ms: Math.round(p95) },
+    totals: {
+      requests: n,
+      ok,
+      fail: n - ok,
+      avg_ms: n ? Math.round(w / n) : 0,
+      p95_ms: Math.round(p95),
+      tokens_in: tin,
+      tokens_out: tout,
+    },
     byProvider,
     byModel: byModel.map((r) => ({
       provider: r.provider,
@@ -199,6 +223,8 @@ function stats(): unknown {
       ok: r.ok,
       avg_ms: Math.round(r.av),
       last: r.last,
+      tokens_in: r.tin ?? 0,
+      tokens_out: r.tout ?? 0,
     })),
   };
 }
@@ -231,6 +257,19 @@ async function handleChatRequest(
   const body = await readBody(request);
   if (!body) return json({ error: { message: "Invalid JSON body", type: "invalid_request_error" } }, 400);
   const res = await handleChat(body as Record<string, unknown>, buildDeps(request));
+  if (res.body) server.timeout(request, 0);
+  return res;
+}
+
+async function handleMessagesRequest(
+  request: Request,
+  server: { timeout: (req: Request, ms: number) => void },
+): Promise<Response> {
+  const body = await readBody(request);
+  if (!body) {
+    return json({ type: "error", error: { type: "invalid_request_error", message: "Invalid JSON body" } }, 400);
+  }
+  const res = await handleMessages(body as Record<string, unknown>, buildDeps(request));
   if (res.body) server.timeout(request, 0);
   return res;
 }
@@ -393,6 +432,7 @@ const server: Server<undefined> = Bun.serve({
       (path === "/v1/chat/completions" || path === "/v1/messages" || path === "/v1/responses")
     ) {
       if (path === "/v1/responses") return handleResponsesRequest(request, server);
+      if (path === "/v1/messages") return handleMessagesRequest(request, server);
       return handleChatRequest(request, server);
     }
 
