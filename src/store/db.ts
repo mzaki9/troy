@@ -43,8 +43,8 @@ export interface ApiAuth {
   on: number;
 }
 
-/** Stored dashboard password (salted SHA-256). Absent while the default password
- * `troy123` is in effect. */
+/** Stored dashboard password. Current rows: argon2id in `hash`, `salt` "".
+ *  Legacy rows: salted SHA-256 hex in both fields — verifyPassword handles both. */
 export interface DashPass {
   salt: string;
   hash: string;

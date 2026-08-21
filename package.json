@@ -7,7 +7,7 @@
     "start": "bun --smol src/server.ts",
     "build": "NODE_ENV=production bun build dashboard/app.tsx --outdir dashboard/dist --minify && tailwindcss -i dashboard/styles.css -o dashboard/dist/styles.css --minify",
     "lint": "biome check src dashboard test",
-    "test": "bun test"
+    "test": "bun test --parallel"
   },
   "dependencies": {
     "@radix-ui/react-alert-dialog": "^1.1.23",

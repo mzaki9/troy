@@ -30,21 +30,18 @@ export function generateApiKey(prefix = "sk-troy-"): string {
   return prefix + [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** Salted SHA-256 of the dashboard password. Salt is random per call unless
- * injected (tests use a fixed salt for stable fixtures). */
-export function hashPassword(
-  password: string,
-  salt = randomBytes(16).toString("hex"),
-): {
-  salt: string;
-  hash: string;
-} {
-  return { salt, hash: createHash("sha256").update(`${salt}:${password}`).digest("hex") };
+/** Argon2id hash of the dashboard password via Bun.password. Stored in
+ *  DashPass.hash (`$argon2id$…`) with DashPass.salt = "" — legacy rows keep
+ *  their salted-SHA-256 hex in both fields, told apart by the `$` prefix. */
+export function hashPassword(password: string): Promise<string> {
+  return Bun.password.hash(password);
 }
 
-/** Constant-time check of a password against its stored salt+hash. */
-export function verifyPassword(password: string, salt: string, hash: string): boolean {
-  return safeEqual(hash, hashPassword(password, salt).hash);
+/** Check a password against a stored hash in either format: argon2id when the
+ *  hash starts with `$`, else legacy salted SHA-256 (constant-time compare). */
+export async function verifyPassword(password: string, salt: string, hash: string): Promise<boolean> {
+  if (hash.startsWith("$")) return Bun.password.verify(password, hash);
+  return safeEqual(hash, createHash("sha256").update(`${salt}:${password}`).digest("hex"));
 }
 
 /** Opaque dashboard session token — 64 hex chars (32 random bytes). */

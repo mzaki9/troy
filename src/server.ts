@@ -13,6 +13,7 @@ import { modelsList, providerCatalog, stats } from "./dash/stats";
 import { enrich, enrichmentStatus, startModelsDevRefresh } from "./modelsdev";
 import { installOpenCodePlugin } from "./opencode-plugin";
 import { handleMessages } from "./providers/anthropic";
+import { discoverFreebuffToken } from "./providers/freebuff";
 import { handleResponses } from "./providers/responses";
 import { CooldownStore } from "./proxy/cooldown";
 import {
@@ -58,7 +59,7 @@ if (!apiAuth.key) {
 // logged-in browser session; the /v1 proxy keeps its own api key.
 let dashPass: DashPass | null = store.getDashPass();
 
-function checkDashboardPassword(pw: unknown): boolean {
+async function checkDashboardPassword(pw: unknown): Promise<boolean> {
   if (typeof pw !== "string" || !pw) return false;
   return dashPass ? verifyPassword(pw, dashPass.salt, dashPass.hash) : safeEqual(pw, DEFAULT_DASHBOARD_PASS);
 }
@@ -180,33 +181,6 @@ function cors(request: Request): Response {
   });
 }
 
-const MIME: Record<string, string> = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript",
-  ".css": "text/css",
-  ".json": "application/json",
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-};
-
-function staticFile(pathname: string): Response | null {
-  if (pathname.startsWith("/assets/")) {
-    const file = Bun.file(`${import.meta.dir}/../public${pathname}`);
-    const ext = `.${pathname.split(".").pop()}`;
-    return new Response(file, {
-      headers: { "content-type": MIME[ext] ?? "application/octet-stream", "cache-control": "no-cache" },
-    });
-  }
-  let rel = pathname === "/" ? "index.html" : pathname.replace(/^\//, "");
-  if (rel === "app.js") rel = "dist/app.js";
-  if (rel === "styles.css") rel = "dist/styles.css";
-  const file = Bun.file(`${import.meta.dir}/../dashboard/${rel}`);
-  const ext = `.${rel.split(".").pop()}`;
-  return new Response(file, {
-    headers: { "content-type": MIME[ext] ?? "application/octet-stream", "cache-control": "no-cache" },
-  });
-}
-
 /** Idle GC: return heap pages to the OS when the proxy is quiet. `--smol` lowers
  * the collection thresholds; this nudges a full collect + compaction so RSS
  * stays at the floor instead of growing with burst traffic. */
@@ -226,8 +200,23 @@ function isV1Path(path: string, method: string): boolean {
   return false;
 }
 
+// ponytail: bun-types 1.3.14 lacks Bun 1.4's `{ dir }` route value — runtime
+// supports it. Drop the cast when @types/bun 1.4 lands.
+const staticRoutes = {
+  "/": Bun.file(`${import.meta.dir}/../dashboard/index.html`),
+  "/app.js": Bun.file(`${import.meta.dir}/../dashboard/dist/app.js`),
+  "/styles.css": Bun.file(`${import.meta.dir}/../dashboard/dist/styles.css`),
+  "/favicon.svg": Bun.file(`${import.meta.dir}/../dashboard/favicon.svg`),
+  "/providers/*": { dir: `${import.meta.dir}/../dashboard/providers` } as never,
+  "/assets/*": { dir: `${import.meta.dir}/../public/assets` } as never,
+};
+
 const server: Server<undefined> = Bun.serve({
   port: PORT,
+  // static dashboard assets — content-type, ETag/304, Range and 404s handled
+  // by Bun. Matched routes never reach fetch, so they don't bump lastActivity;
+  // only proxy traffic counts toward the idle-GC timer, which is the intent.
+  routes: staticRoutes,
   fetch(request): Response | Promise<Response> {
     lastActivity = Date.now();
     const url = new URL(request.url);
@@ -240,9 +229,9 @@ const server: Server<undefined> = Bun.serve({
       return json({ authed: authed(request), defaultPass: !dashPass });
     }
     if (path === "/api/login" && request.method === "POST") {
-      return readBody(request).then((b) => {
+      return readBody(request).then(async (b) => {
         const body = b as { password?: string } | null;
-        if (!checkDashboardPassword(body?.password)) {
+        if (!(await checkDashboardPassword(body?.password))) {
           return json({ error: "wrong dashboard password" }, 401);
         }
         const token = newSessionToken();
@@ -348,6 +337,11 @@ const server: Server<undefined> = Bun.serve({
       return json(providerCatalog(store));
     }
 
+    // freebuff: surface the CLI login token so the dashboard can prefill a key
+    if (request.method === "GET" && path === "/api/providers/freebuff/cli-token") {
+      return json({ token: discoverFreebuffToken() });
+    }
+
     if (request.method === "GET" && path.startsWith("/api/providers/") && path.endsWith("/models")) {
       const id = decodeURIComponent(path.slice("/api/providers/".length, -"/models".length));
       const def = getProvider(id);
@@ -355,6 +349,13 @@ const server: Server<undefined> = Bun.serve({
       const conn = store.listConnections(id).find((c) => c.is_active === 1) ?? null;
       const headers = conn ? authHeaders(def, conn) : {};
       const base = conn ? buildBaseUrl(def, conn) : def.baseUrl;
+      // static-catalog providers (no live models endpoint upstream) skip the probe
+      if (def.staticModels) {
+        return json({
+          url: "static",
+          models: def.staticModels.map((mid) => ({ id: mid, name: mid, thinking: enrich(mid).reasoning })),
+        });
+      }
       const modelsUrl =
         def.modelsUrl ??
         (base.endsWith("/chat/completions") ? base.replace(/\/chat\/completions$/, "/models") : `${base}/models`);
@@ -430,16 +431,16 @@ const server: Server<undefined> = Bun.serve({
     }
 
     if (path === "/api/password" && request.method === "POST") {
-      return readBody(request).then((b) => {
+      return readBody(request).then(async (b) => {
         const body = b as { current?: string; next?: string } | null;
-        if (!checkDashboardPassword(body?.current)) {
+        if (!(await checkDashboardPassword(body?.current))) {
           return json({ error: "current password is wrong" }, 403);
         }
         const next = body?.next;
         if (typeof next !== "string" || next.length < 4) {
           return json({ error: "new password must be at least 4 characters" }, 400);
         }
-        dashPass = hashPassword(next);
+        dashPass = { salt: "", hash: await hashPassword(next) };
         store.putDashPass(dashPass);
         return json({ ok: true });
       });
@@ -544,11 +545,6 @@ const server: Server<undefined> = Bun.serve({
     if (path === "/api/logs") {
       const limit = Math.min(500, Number(url.searchParams.get("limit") ?? 50));
       return json(store.listLogs(limit));
-    }
-
-    if (request.method === "GET") {
-      const file = staticFile(path);
-      if (file) return file;
     }
 
     return json({ error: "not found" }, 404);

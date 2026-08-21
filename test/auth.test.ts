@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   DEFAULT_DASHBOARD_PASS,
   extractApiKey,
@@ -53,21 +54,20 @@ describe("dashboard password", () => {
     expect(DEFAULT_DASHBOARD_PASS).toBe("troy123");
   });
 
-  test("hashPassword salts + hashes; verifyPassword accepts only the original", () => {
-    const { salt, hash } = hashPassword("troy123");
-    expect(hash).toMatch(/^[0-9a-f]{64}$/);
-    expect(verifyPassword("troy123", salt, hash)).toBe(true);
-    expect(verifyPassword("troy124", salt, hash)).toBe(false);
-    expect(verifyPassword("troy12", salt, hash)).toBe(false);
+  test("hashPassword produces an argon2id hash; verifyPassword accepts only the original", async () => {
+    const hash = await hashPassword("troy123");
+    expect(hash).toMatch(/^\$argon2id\$/);
+    expect(await verifyPassword("troy123", "", hash)).toBe(true);
+    expect(await verifyPassword("troy124", "", hash)).toBe(false);
+    expect(await verifyPassword("troy12", "", hash)).toBe(false);
   });
 
-  test("the same password hashes differently with different salts", () => {
-    const a = hashPassword("troy123");
-    const b = hashPassword("troy123");
-    expect(a.salt).not.toBe(b.salt);
-    expect(a.hash).not.toBe(b.hash);
-    expect(verifyPassword("troy123", a.salt, a.hash)).toBe(true);
-    expect(verifyPassword("troy123", b.salt, b.hash)).toBe(true);
+  test("verifyPassword still accepts legacy salted SHA-256 rows and upgrades are one-way", async () => {
+    const salt = "fixed-salt";
+    const legacy = createHash("sha256").update(`${salt}:troy123`).digest("hex");
+    expect(legacy).toMatch(/^[0-9a-f]{64}$/);
+    expect(await verifyPassword("troy123", salt, legacy)).toBe(true);
+    expect(await verifyPassword("troy124", salt, legacy)).toBe(false);
   });
 
   test("session tokens are opaque, unique, hex strings", () => {
