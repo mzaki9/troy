@@ -185,6 +185,7 @@ export interface LogRow {
   combo?: string;
   status: string;
   latency_ms: number;
+  tokens?: Record<string, number>;
 }
 
 export interface ChatDeps {
@@ -252,6 +253,165 @@ function passthrough(res: Response, stream: boolean): Response {
     if (v) headers.set(h, v);
   }
   return new Response(res.body, { status: res.status, headers });
+}
+
+/** Numeric fields of an upstream `usage` object, or undefined when absent. */
+function numericUsage(u: unknown): Record<string, number> | undefined {
+  if (!u || typeof u !== "object") return undefined;
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(u as Record<string, unknown>)) {
+    if (typeof v === "number") out[k] = v;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** usage from a complete chat-completions JSON body. */
+function usageOf(text: string): Record<string, number> | undefined {
+  try {
+    return numericUsage((JSON.parse(text) as { usage?: unknown }).usage);
+  } catch {
+    return undefined;
+  }
+}
+
+const BODY_CAP = 32 << 20; // upstream JSON bodies beyond this are treated as failures
+
+/** Fully buffer a non-streaming response. Empty / reset / oversize bodies are
+ *  failures so the chain walk can try the next account instead of forwarding
+ *  a broken payload. */
+async function readBody(res: Response): Promise<{ text: string | null; error: string | null }> {
+  if (!res.body) return { text: null, error: "upstream returned an empty body" };
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let text = "";
+  try {
+    for (;;) {
+      const n = await reader.read();
+      if (n.done) break;
+      text += dec.decode(n.value, { stream: true });
+      if (text.length > BODY_CAP) return { text: null, error: `upstream body exceeds ${BODY_CAP} bytes` };
+    }
+  } catch (e) {
+    return { text: null, error: e instanceof Error ? e.message : "upstream connection reset" };
+  }
+  if (!text) return { text: null, error: "upstream returned an empty body" };
+  return { text, error: null };
+}
+
+type Chunk = { value: Uint8Array; done: false } | { value?: undefined; done: true };
+
+/** Consume the first chunk of a streaming response and hand back a replayable
+ *  body. A 200 whose body dies before emitting anything becomes a failure so
+ *  the walk continues; mid-stream death surfaces one SSE error frame. */
+export async function takeHead(res: Response, stream: boolean): Promise<{ res: Response; error: string | null }> {
+  const reader = res.body!.getReader();
+  let first: Chunk;
+  try {
+    first = await reader.read();
+  } catch (e) {
+    return { res, error: e instanceof Error ? e.message : "upstream connection reset" };
+  }
+  if (first.done) return { res, error: "upstream returned an empty body" };
+  const enc = new TextEncoder();
+  let opened = false;
+  const body = new ReadableStream<Uint8Array>({
+    start(c) {
+      c.enqueue(first.value);
+      opened = true;
+    },
+    async pull(c) {
+      let n: Chunk;
+      try {
+        n = await reader.read();
+      } catch (e) {
+        if (stream && opened) {
+          c.enqueue(
+            enc.encode(
+              `data: ${JSON.stringify({
+                error: {
+                  message: e instanceof Error ? e.message : "upstream connection lost mid-stream",
+                  type: "server_error",
+                  code: "bad_gateway",
+                },
+              })}\n\n`,
+            ),
+          );
+        }
+        c.close();
+        return;
+      }
+      if (n.done) c.close();
+      else c.enqueue(n.value);
+    },
+    cancel() {
+      reader.cancel();
+    },
+  });
+  return { res: new Response(body, { status: res.status, headers: res.headers }), error: null };
+}
+
+/** SSE scanner that lifts `usage` out of chat chunks without touching bytes. */
+function scanUsage(onUsage: (u: Record<string, number>) => void): TransformStream<Uint8Array, Uint8Array> {
+  const dec = new TextDecoder();
+  let buf = "";
+  const grab = (raw: string) => {
+    if (!raw || raw === "[DONE]") return;
+    try {
+      const u = numericUsage((JSON.parse(raw) as { usage?: unknown }).usage);
+      if (u) onUsage(u);
+    } catch {
+      /* non-JSON line */
+    }
+  };
+  return new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, c) {
+      buf += dec.decode(chunk, { stream: true });
+      for (let i = buf.indexOf("\n"); i >= 0; i = buf.indexOf("\n")) {
+        const line = buf.slice(0, i).trim();
+        buf = buf.slice(i + 1);
+        if (line.startsWith("data:")) grab(line.slice(5).trim());
+      }
+      c.enqueue(chunk);
+    },
+    flush() {
+      const tail = (buf + dec.decode()).trim();
+      if (tail.startsWith("data:")) grab(tail.slice(5).trim());
+    },
+  });
+}
+
+/** Fire a callback exactly once when the body is consumed or abandoned. */
+function endMark(body: ReadableStream<Uint8Array>, onEnd: () => void): ReadableStream<Uint8Array> {
+  const reader = body.getReader();
+  let fired = false;
+  const fire = () => {
+    if (!fired) {
+      fired = true;
+      onEnd();
+    }
+  };
+  return new ReadableStream<Uint8Array>({
+    async pull(c) {
+      let n: Chunk;
+      try {
+        n = await reader.read();
+      } catch {
+        fire();
+        c.close();
+        return;
+      }
+      if (n.done) {
+        fire();
+        c.close();
+        return;
+      }
+      c.enqueue(n.value);
+    },
+    cancel() {
+      fire();
+      reader.cancel();
+    },
+  });
 }
 
 async function forward(
@@ -384,10 +544,57 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
       }
 
       if (res.ok) {
+        if (cc) {
+          deps.cooldowns.success(conn.id, model, circuitKey);
+          deps.onLog({ provider, model, combo: combo?.name, status: "200 OK", latency_ms: now() - t0 });
+          return commandCodeReply(res, stream, model, wrapped!.toolMap, deps.signal);
+        }
+        if (!stream) {
+          // buffer JSON bodies — dead/empty/oversize upstreams fall through to
+          // the next account instead of forwarding a broken payload
+          const full = await readBody(res);
+          if (full.error) {
+            deps.cooldowns.fail(conn.id, model, 0, full.error, circuitKey);
+            lastError = full.error;
+            lastStatus = 502;
+            excluded.add(conn.id);
+            continue;
+          }
+          const tokens = usageOf(full.text!);
+          deps.cooldowns.success(conn.id, model, circuitKey);
+          deps.onLog({
+            provider,
+            model,
+            combo: combo?.name,
+            status: "200 OK",
+            latency_ms: now() - t0,
+            ...(tokens ? { tokens } : {}),
+          });
+          return passthrough(new Response(full.text!, { status: res.status, headers: res.headers }), false);
+        }
+        // streaming: guard the first chunk, tee usage off the wire, log at end
+        const head = await takeHead(res, true);
+        if (head.error) {
+          deps.cooldowns.fail(conn.id, model, 0, head.error, circuitKey);
+          lastError = head.error;
+          lastStatus = 502;
+          excluded.add(conn.id);
+          continue;
+        }
         deps.cooldowns.success(conn.id, model, circuitKey);
-        deps.onLog({ provider, model, combo: combo?.name, status: "200 OK", latency_ms: now() - t0 });
-        if (cc) return commandCodeReply(res, stream, model, wrapped!.toolMap, deps.signal);
-        return passthrough(res, stream);
+        let tokens: Record<string, number> | undefined;
+        const scanned = head.res.body!.pipeThrough(scanUsage((u) => (tokens = u)));
+        const logged = endMark(scanned, () =>
+          deps.onLog({
+            provider,
+            model,
+            combo: combo?.name,
+            status: "200 OK",
+            latency_ms: now() - t0,
+            ...(tokens ? { tokens } : {}),
+          }),
+        );
+        return passthrough(new Response(logged, { status: 200, headers: res.headers }), true);
       }
 
       const bodyText = await res.text().catch(() => "");

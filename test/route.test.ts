@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Store } from "../src/db";
 import { registerCustomProvider, unregisterCustomProvider } from "../src/registry";
-import { type ChatDeps, CooldownStore, handleChat, type LogRow } from "../src/route";
+import { type ChatDeps, CooldownStore, handleChat, type LogRow, takeHead } from "../src/route";
 
 interface StubBehavior {
   status: number;
@@ -22,6 +22,27 @@ const stub = Bun.serve({
     lastPayload = JSON.parse(text);
     if (key === "echo") {
       return Response.json({ echo: JSON.parse(text), key }, { status: 200 });
+    }
+    if (key === "dead") {
+      // 200 whose body dies before emitting anything
+      return new Response(
+        new ReadableStream({
+          start(c) {
+            c.error(new Error("connection reset by peer"));
+          },
+        }),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    }
+    if (key === "empty") {
+      return new Response(
+        new ReadableStream({
+          start(c) {
+            c.close();
+          },
+        }),
+        { status: 200 },
+      );
     }
     const b = behaviors.get(key);
     if (b?.headers?.["content-type"] === "text/event-stream") {
@@ -198,6 +219,90 @@ describe("circuit breaker", () => {
     await handleChat({ model: "cb", message: "hi" }, ctx.deps);
     // single failure → breaker not open (account cooldown is separate)
     expect(ctx.cd.isOpen("openai/gpt-4o")).toBe(false);
+  });
+});
+
+describe("streaming failover + usage capture", () => {
+  test("200 with dying body falls through to the next account", async () => {
+    behaviors.set("good", { status: 200, body: JSON.stringify({ ok: true }) });
+    const ctx = makeDeps();
+    addConn(ctx, "openai", "dead");
+    addConn(ctx, "openai", "good");
+    const res = await handleChat({ model: "openai/gpt-4o", stream: true, messages: [] }, ctx.deps);
+    expect(res.status).toBe(200);
+    await res.text(); // drain — stream logs are deferred to end of body
+    expect(ctx.logs[0].status).toBe("200 OK");
+    expect(ctx.logs[0].provider).toBe("openai");
+  });
+
+  test("empty 200 body falls through (non-stream)", async () => {
+    behaviors.set("good", { status: 200, body: JSON.stringify({ ok: true }) });
+    const ctx = makeDeps();
+    addConn(ctx, "openai", "empty");
+    addConn(ctx, "openai", "good");
+    const res = await handleChat({ model: "openai/gpt-4o", messages: [] }, ctx.deps);
+    expect(res.status).toBe(200);
+  });
+
+  test("usage captured from JSON responses", async () => {
+    behaviors.set("tok", {
+      status: 200,
+      body: JSON.stringify({ choices: [], usage: { prompt_tokens: 11, completion_tokens: 7 } }),
+    });
+    const ctx = makeDeps();
+    addConn(ctx, "openai", "tok");
+    await handleChat({ model: "openai/gpt-4o", messages: [] }, ctx.deps);
+    expect(ctx.logs[0].tokens).toEqual({ prompt_tokens: 11, completion_tokens: 7 });
+  });
+
+  test("usage captured from the final SSE chunk (log deferred to stream end)", async () => {
+    const sse = [
+      'data: {"choices":[{"delta":{"content":"hi"}}]}',
+      'data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2}}',
+      "data: [DONE]",
+      "",
+    ].join("\n\n");
+    behaviors.set("sse-tok", { status: 200, headers: { "content-type": "text/event-stream" }, body: sse });
+    const ctx = makeDeps();
+    addConn(ctx, "openai", "sse-tok");
+    const res = await handleChat({ model: "openai/gpt-4o", stream: true, messages: [] }, ctx.deps);
+    expect(res.status).toBe(200);
+    await res.text(); // drain — the deferred log fires at end of body
+    expect(ctx.logs[0].tokens).toEqual({ prompt_tokens: 5, completion_tokens: 2 });
+  });
+
+  test("mid-stream death surfaces an SSE error frame (takeHead unit)", async () => {
+    const enc = new TextEncoder();
+    let sent = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(c) {
+        if (!sent) {
+          sent = true;
+          c.enqueue(enc.encode('data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'));
+        } else {
+          c.error(new Error("mid-stream reset"));
+        }
+      },
+    });
+    const head = await takeHead(new Response(body, { headers: { "content-type": "text/event-stream" } }), true);
+    expect(head.error).toBeNull();
+    const text = await head.res.text();
+    expect(text).toContain('"partial"');
+    expect(text).toContain("mid-stream reset");
+  });
+
+  test("takeHead flags immediately-empty bodies", async () => {
+    const head = await takeHead(
+      new Response(
+        new ReadableStream({
+          start(c) {
+            c.close();
+          },
+        }),
+      ),
+      false,
+    );
+    expect(head.error).toBe("upstream returned an empty body");
   });
 });
 
