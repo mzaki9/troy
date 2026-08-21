@@ -241,15 +241,6 @@ function RequestsTable({ rows, limit }: { rows?: LogRow[]; limit: number }) {
             </TableCell>
             <TableCell className="text-right font-mono text-xs tabular-nums text-muted-foreground">
               {r.tokens ? `${tok(r.tokens.prompt_tokens)} / ${tok(r.tokens.completion_tokens)}` : "—"}
-              {(r.rtk_saved ?? 0) > 0 && (
-                <Badge
-                  variant="secondary"
-                  className="ml-1.5 font-mono text-[10px]"
-                  title={`RTK compressed ~${(r.rtk_seen ?? 0).toLocaleString()} chars of tool output`}
-                >
-                  rtk −{Math.round((r.rtk_saved! / (r.rtk_seen || 1)) * 100)}%
-                </Badge>
-              )}
             </TableCell>
             <TableCell className="text-right font-mono tabular-nums">{r.latency_ms}</TableCell>
           </TableRow>
