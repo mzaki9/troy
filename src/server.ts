@@ -10,6 +10,7 @@ import {
   verifyPassword,
 } from "./dash/auth";
 import { modelsList, providerCatalog, stats } from "./dash/stats";
+import { clearDshPlugin, installDshPlugin } from "./dsh-plugin";
 import { enrich, enrichmentStatus, startModelsDevRefresh } from "./modelsdev";
 import { installOpenCodePlugin } from "./opencode-plugin";
 import { handleMessages } from "./providers/anthropic";
@@ -289,6 +290,27 @@ const server: Server<undefined> = Bun.serve({
         );
       } catch (e) {
         return json({ error: e instanceof Error ? e.message : "install failed" }, 500);
+      }
+    }
+
+    if (path === "/api/install-dsh-plugin" && request.method === "POST") {
+      try {
+        return json(
+          installDshPlugin({
+            baseUrl: url.origin,
+            apiKey: apiAuth.on === 1 ? apiAuth.key : "",
+          }),
+        );
+      } catch (e) {
+        return json({ error: e instanceof Error ? e.message : "install failed" }, 500);
+      }
+    }
+
+    if (path === "/api/clear-dsh-plugin" && request.method === "POST") {
+      try {
+        return json(clearDshPlugin());
+      } catch (e) {
+        return json({ error: e instanceof Error ? e.message : "clear failed" }, 500);
       }
     }
 

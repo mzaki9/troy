@@ -222,6 +222,8 @@ export function ToolsPage() {
   const [rotating, setRotating] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [pluginMsg, setPluginMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [installingDsh, setInstallingDsh] = useState(false);
+  const [dshMsg, setDshMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const logs = useApi<LogRow[]>("/api/logs?limit=100");
   const saved = useApi<SavedModel[]>("/api/models");
   const combos = useApi<Combo[]>("/api/combos");
@@ -264,6 +266,22 @@ export function ToolsPage() {
       setPluginMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
     } finally {
       setInstalling(false);
+    }
+  };
+
+  const installDsh = async () => {
+    setInstallingDsh(true);
+    setDshMsg(null);
+    try {
+      const res = await api<{ pluginPath: string }>("/api/install-dsh-plugin", { method: "POST" });
+      setDshMsg({
+        ok: true,
+        text: `installed → ${res.pluginPath} — DeepSeek Harness hot-loads it; open Settings → Models and pick a troy/… model`,
+      });
+    } catch (e) {
+      setDshMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setInstallingDsh(false);
     }
   };
 
@@ -329,6 +347,23 @@ export function ToolsPage() {
               {installing ? "installing…" : "install"}
             </Button>
           </div>
+          <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2">
+            <PlugZap className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="text-[11px] font-medium">DeepSeek Harness plugin</span>
+            <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
+              live model list in DeepSeek Harness (dsh) — installs into ~/.dsh, hot-reloads
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-6 gap-1 px-2 text-[11px]"
+              onClick={installDsh}
+              disabled={installingDsh}
+            >
+              <PlugZap className="size-3" />
+              {installingDsh ? "installing…" : "install"}
+            </Button>
+          </div>
           {pluginMsg ? (
             <p
               className={cn(
@@ -337,6 +372,16 @@ export function ToolsPage() {
               )}
             >
               {pluginMsg.text}
+            </p>
+          ) : null}
+          {dshMsg ? (
+            <p
+              className={cn(
+                "text-[11px]",
+                dshMsg.ok ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400",
+              )}
+            >
+              {dshMsg.text}
             </p>
           ) : null}
           {chosen.length > 0 ? (
