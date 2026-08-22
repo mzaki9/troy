@@ -46,10 +46,16 @@ OpenCode or any OpenAI-compatible tool at `http://localhost:31337/v1` and get:
 
 ```bash
 # requires Bun ≥ 1.4  (curl -fsSL https://bun.sh/install | bash)
-npm install -g troy-proxy
 
-troy
+npm install -g troy-proxy     # or: bun add -g troy-proxy
+troy                          # or: troy-proxy — both commands work
+
+# no install, one-off:
+npx troy-proxy                # or: bunx troy-proxy
 ```
+
+> Installed **locally** (without `-g`) inside another project? The binary isn't on your PATH —
+> run it with `npx troy-proxy` / `bunx troy-proxy`, or add `-g`.
 
 Open **http://localhost:31337** — log in with the default password `troy123`
 (you'll be prompted to change it), then:

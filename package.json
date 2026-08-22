@@ -1,6 +1,6 @@
 {
   "name": "troy-proxy",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local LLM API proxy with multi-provider routing, combos, cooldowns and a usage dashboard",
   "license": "GPL-3.0-or-later",
   "author": "Muhammad Zaki <tuanzaki9@gmail.com>",
@@ -19,7 +19,8 @@
   ],
   "type": "module",
   "bin": {
-    "troy": "./bin/troy.js"
+    "troy": "bin/troy.js",
+    "troy-proxy": "bin/troy.js"
   },
   "files": [
     "bin",
@@ -54,7 +55,8 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "recharts": "^3.10.1",
-    "tailwind-merge": "^3.6.0"
+    "tailwind-merge": "^3.6.0",
+    "troy-proxy": "^0.1.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.9",
