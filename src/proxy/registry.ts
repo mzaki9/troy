@@ -188,7 +188,7 @@ export const PROVIDERS: Provider[] = [
   {
     id: "freebuff",
     aliases: ["freebuff", "fb"],
-    baseUrl: "https://codebuff.com/api/v1/chat/completions",
+    baseUrl: "https://www.codebuff.com/api/v1/chat/completions",
     auth: "bearer",
     headers: { "User-Agent": "ai-sdk/openai-compatible/1.0.0/codebuff" },
     autoToken: true,
