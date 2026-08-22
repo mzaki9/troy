@@ -1,6 +1,7 @@
 node_modules/
 dist/
 data/
+meta.json
 *.log
-.envmeta.json
+.env
 learn-docs/

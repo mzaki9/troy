@@ -1,13 +1,43 @@
 {
-  "name": "troy",
+  "name": "troy-proxy",
   "version": "0.1.0",
+  "description": "Local LLM API proxy with multi-provider routing, combos, cooldowns and a usage dashboard",
+  "license": "GPL-3.0-or-later",
+  "author": "Muhammad Zaki <tuanzaki9@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mzaki9/troy.git"
+  },
+  "keywords": [
+    "llm",
+    "proxy",
+    "anthropic",
+    "openai",
+    "api-gateway",
+    "opencode",
+    "ai"
+  ],
   "type": "module",
+  "bin": {
+    "troy": "./bin/troy.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "dashboard",
+    "public",
+    "LICENSE"
+  ],
+  "engines": {
+    "bun": ">=1.4.0"
+  },
   "scripts": {
     "dev": "bun build dashboard/app.tsx --outdir dashboard/dist --minify --watch & tailwindcss -i dashboard/styles.css -o dashboard/dist/styles.css --minify & bun --smol --watch src/server.ts",
     "start": "bun --smol src/server.ts",
     "build": "NODE_ENV=production bun build dashboard/app.tsx --outdir dashboard/dist --minify && tailwindcss -i dashboard/styles.css -o dashboard/dist/styles.css --minify",
     "lint": "biome check src dashboard test",
-    "test": "bun test --parallel"
+    "test": "bun test --parallel",
+    "prepublishOnly": "bun test && biome check src && NODE_ENV=production bun run build"
   },
   "dependencies": {
     "@radix-ui/react-alert-dialog": "^1.1.23",
