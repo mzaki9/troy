@@ -20,6 +20,7 @@ const CLI_MARKER =
 const MARKER_PHRASE = "You are Buffy, the strategic coding assistant";
 /** session is ready until expiresAt minus this margin */
 const EXPIRY_MARGIN_MS = 5_000;
+const RUN_TTL_MS = 6 * 60 * 60 * 1000;
 
 type Obj = Record<string, unknown>;
 
@@ -40,7 +41,7 @@ function ms(v: unknown): number {
   return 0;
 }
 
-// ---- free-session cache: per-connection, single-flight refresh ----
+// ---- free-session cache: per-connection+model, single-flight refresh ----
 
 interface FreebuffSession {
   instanceId: string; // "" = disabled session: proceed without an instance id
@@ -48,9 +49,88 @@ interface FreebuffSession {
 }
 
 const sessions = new Map<string, { sess?: FreebuffSession; refreshing?: Promise<FreebuffSession> }>();
+const runs = new Map<string, { run?: FreebuffRun; refreshing?: Promise<FreebuffRun> }>();
+
+function sessionKey(connId: string, model: string): string {
+  return `${connId}:${model || "*"}`;
+}
+function runKey(connId: string, agentId: string): string {
+  return `${connId}:${agentId || "*"}`;
+}
 
 export function invalidateFreebuff(connId: string): void {
-  sessions.delete(connId);
+  for (const k of [...sessions.keys()]) if (k === connId || k.startsWith(`${connId}:`)) sessions.delete(k);
+  for (const k of [...runs.keys()]) if (k === connId || k.startsWith(`${connId}:`)) runs.delete(k);
+}
+
+export function invalidateFreebuffSession(connId: string, model: string): void {
+  sessions.delete(sessionKey(connId, model));
+}
+
+export function invalidateFreebuffRun(connId: string, agentId?: string): void {
+  if (agentId) runs.delete(runKey(connId, agentId));
+  else for (const k of [...runs.keys()]) if (k === connId || k.startsWith(`${connId}:`)) runs.delete(k);
+}
+
+// ---- agent mapping (fallback mirror of freebuff-proxy registry) ----
+
+const AGENT_BY_MODEL: Record<string, string> = {
+  "mimo/mimo-v2.5": "base2-free-mimo",
+  "minimax/minimax-m3": "base2-free-minimax-m3",
+  "openai/gpt-5.6-luna": "base2-free-luna",
+  "deepseek/deepseek-v4-pro": "base2-free-deepseek",
+  "deepseek/deepseek-v4-flash": "base2-free-deepseek-flash",
+  "z-ai/glm-5.2": "base2-free-glm",
+  "crof/kimi-k3-eco": "base2-free-kimi-k3-eco",
+  "openai/gpt-5.6-luna-es": "base2-free-luna-es",
+  "anthropic/claude-fable-5": "base2-free-fable",
+  "meta/muse-spark-1.2-contributor": "base2-free-muse-spark",
+  "stealth/ox-alpha": "base2-free-ox-alpha",
+  "deepseek/deepseek-v4-pro-max": "base2-free-deepseek-pro-max",
+  "deepseek/deepseek-v4-flash-max": "base2-free-deepseek-flash-max",
+  "openai/gpt-5.6-luna-max": "base2-free-luna-max",
+};
+
+export function agentForModel(model: string): string {
+  if (AGENT_BY_MODEL[model]) return AGENT_BY_MODEL[model];
+  // fallback: use provider prefix
+  const prov = model.split("/")[0] ?? "";
+  if (prov === "mimo") return "base2-free-mimo";
+  if (prov === "minimax") return "base2-free-minimax-m3";
+  if (prov === "openai") return "base2-free-luna";
+  if (prov === "deepseek") return "base2-free-deepseek";
+  if (prov === "z-ai") return "base2-free-glm";
+  return "base2-free-mimo";
+}
+
+// ---- manual pause helpers (no auto idle reaper) ----
+
+export function getFreebuffSessions(): { key: string; instanceId: string; expiresAt: number }[] {
+  const out: { key: string; instanceId: string; expiresAt: number }[] = [];
+  for (const [k, v] of sessions) if (v.sess) out.push({ key: k, instanceId: v.sess.instanceId, expiresAt: v.sess.expiresAt });
+  return out;
+}
+
+export async function pauseFreebuff(connId?: string, model?: string): Promise<number> {
+  let n = 0;
+  if (connId && model) {
+    const k = sessionKey(connId, model);
+    if (sessions.has(k)) { sessions.delete(k); n++; }
+    // also clear runs for this conn
+    for (const rk of [...runs.keys()]) if (rk.startsWith(`${connId}:`)) { runs.delete(rk); }
+    if (n) return 1;
+    return 0;
+  }
+  if (connId) {
+    for (const k of [...sessions.keys()]) if (k === connId || k.startsWith(`${connId}:`)) { sessions.delete(k); n++; }
+    for (const k of [...runs.keys()]) if (k === connId || k.startsWith(`${connId}:`)) runs.delete(k);
+    return n;
+  }
+  // all
+  const total = sessions.size;
+  sessions.clear();
+  runs.clear();
+  return total;
 }
 
 interface ConnLike {
@@ -151,19 +231,53 @@ export async function ensureFreebuffSession(
   model: string,
   doFetch: typeof fetch = fetch,
 ): Promise<FreebuffSession> {
-  const st = sessions.get(conn.id);
+  const key = sessionKey(conn.id, model);
+  const st = sessions.get(key);
   if (st?.sess && st.sess.expiresAt - EXPIRY_MARGIN_MS > Date.now()) return st.sess;
   if (st?.refreshing) return st.refreshing;
   const refreshing = createSession(origin, conn, model, doFetch)
     .then((sess) => {
-      sessions.set(conn.id, { sess });
+      sessions.set(key, { sess });
       return sess;
     })
     .catch((err: unknown) => {
-      sessions.delete(conn.id);
+      sessions.delete(key);
       throw err;
     });
-  sessions.set(conn.id, { ...st, refreshing });
+  sessions.set(key, { ...st, refreshing });
+  return refreshing;
+}
+
+// ---- run cache: random UUID, 6h TTL (no upstream START) ----
+
+interface FreebuffRun {
+  runId: string;
+  traceSessionId: string;
+  step: number;
+  expiresAt: number;
+}
+
+export async function ensureFreebuffRun(
+  _origin: string,
+  conn: ConnLike,
+  agentId: string,
+  _doFetch: typeof fetch = fetch,
+): Promise<FreebuffRun> {
+  const key = runKey(conn.id, agentId);
+  const st = runs.get(key);
+  if (st?.run && st.run.expiresAt - EXPIRY_MARGIN_MS > Date.now()) return st.run;
+  if (st?.refreshing) return st.refreshing;
+  const run: FreebuffRun = {
+    runId: crypto.randomUUID(),
+    traceSessionId: crypto.randomUUID(),
+    step: 1,
+    expiresAt: Date.now() + RUN_TTL_MS,
+  };
+  const refreshing = Promise.resolve(run).then((r) => {
+    runs.set(key, { run: r });
+    return r;
+  });
+  runs.set(key, { ...st, refreshing });
   return refreshing;
 }
 
@@ -202,11 +316,17 @@ export function ensureMarker(messages: unknown): Obj[] {
  * codebuff_metadata (run_id + fresh SDK-faithful client_id draw), provider
  * data_collection=deny, stream=true, cb_easp stop sentinel when absent.
  */
-export function wrapFreebuff(input: Obj, opts: { runId: string; instanceId?: string }): Obj {
+export function wrapFreebuff(
+  input: Obj,
+  opts: { runId: string; instanceId?: string; traceSessionId?: string; step?: number; costMode?: string },
+): Obj {
   const payload: Obj = { ...input, stream: true, provider: { data_collection: "deny" } };
   if (!Array.isArray(payload.stop)) payload.stop = ["cb_easp"];
   const metadata: Obj = { run_id: opts.runId, client_id: Math.random().toString(36).substring(2, 15) };
   if (opts.instanceId) metadata.freebuff_instance_id = opts.instanceId;
+  if (opts.traceSessionId) metadata.trace_session_id = opts.traceSessionId;
+  if (typeof opts.step === "number") metadata.step = opts.step;
+  if (opts.costMode) metadata.cost_mode = opts.costMode;
   payload.codebuff_metadata = metadata;
   payload.messages = ensureMarker(payload.messages);
   return payload;

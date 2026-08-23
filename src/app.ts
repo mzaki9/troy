@@ -368,7 +368,7 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
       }
 
       if (request.method === "GET" && path === "/api/providers/freebuff/sessions") {
-        return json({ idleMs: FREEBUFF_IDLE_MS, sessions: getFreebuffSessions() });
+        return json({ sessions: getFreebuffSessions() });
       }
 
       if ((request.method === "POST" || request.method === "DELETE") && path === "/api/providers/freebuff/pause") {
@@ -379,7 +379,7 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
           const connId = body.connId ?? qConn;
           const model = body.model ?? qModel;
           const paused = await pauseFreebuff(connId, model);
-          return json({ paused, idleMs: FREEBUFF_IDLE_MS });
+          return json({ paused });
         });
       }
       // legacy: DELETE session directly
