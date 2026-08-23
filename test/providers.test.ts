@@ -15,10 +15,27 @@ const stub = Bun.serve({
       headers[k] = v;
     });
     lastReq = { url: req.url, headers };
-    await req.text();
-    // freebuff: the envelope bridge admits a session before the chat call
-    if (new URL(req.url).pathname === "/api/v1/freebuff/session") {
+    const bodyText = await req.text().catch(() => "");
+    // freebuff: the envelope bridge admits a session + run before the chat call
+    const path = new URL(req.url).pathname;
+    if (path === "/api/v1/freebuff/session") {
       return new Response(JSON.stringify({ status: "active", instanceId: "stub", expiresAt: Date.now() + 60_000 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (path === "/api/v1/agent-runs") {
+      // START returns runId; FINISH is best-effort success
+      try {
+        const b = JSON.parse(bodyText || "{}");
+        if (b.action === "START") {
+          return new Response(JSON.stringify({ runId: "test-run-id" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+      } catch {}
+      return new Response(JSON.stringify({ success: true }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -111,9 +128,9 @@ describe("inferProvider prefix rules", () => {
   });
 });
 
-describe("routing — every provider through the stub", () => {
-  for (const p of PROVIDERS) {
-    test(`${p.id} routes with correct auth + endpoint`, async () => {
+describe("routing — every provider through the stub (integrated)", () => {
+  test("all providers route with correct auth + endpoint + headers", async () => {
+    for (const p of PROVIDERS) {
       const deps = makeDeps();
       const model = p.id === "opencode" ? "mimo-v2.5-free" : "test-model";
       const extra = p.placeholders?.length
@@ -132,13 +149,12 @@ describe("routing — every provider through the stub", () => {
 
       for (const [k, v] of Object.entries(p.headers ?? {})) {
         if (p.id === "command-code" && k === "x-session-id") {
-          // per-request UUID override (#4): present and NOT the static value
           expect(header(k), "command-code x-session-id overridden").toBeTruthy();
           expect(header(k), "command-code x-session-id not static").not.toBe(v);
           continue;
         }
         expect(header(k), `${p.id} static header ${k}`).toBe(v);
       }
-    });
-  }
+    }
+  });
 });

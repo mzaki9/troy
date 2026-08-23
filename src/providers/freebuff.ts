@@ -77,10 +77,14 @@ export function parseFreebuffToken(json: string): string {
 
 let discoveredToken: string | null = null;
 
+export function __resetDiscoveredTokenForTests(): void {
+  discoveredToken = null;
+}
+
 /** authToken from the CLI credentials files, "" when none; cached after first hit */
-export function discoverFreebuffToken(): string {
+export function discoverFreebuffToken(home?: string): string {
   if (discoveredToken) return discoveredToken;
-  for (const path of freebuffTokenPaths(homedir())) {
+  for (const path of freebuffTokenPaths(home ?? homedir())) {
     try {
       const token = parseFreebuffToken(readFileSync(path, "utf8"));
       if (token) {

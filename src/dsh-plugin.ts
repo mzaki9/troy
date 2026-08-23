@@ -189,14 +189,14 @@ export function clearDshPlugin(opts: { home?: string } = {}): DshClearResult {
 
   const patchPath = join(home, "cordis.patch.yml");
   const patchText = readOptional(patchPath);
-  if (patchText !== null && patchText.includes(MARKER_START)) {
+  if (patchText?.includes(MARKER_START)) {
     writeOrUnlinkIfBlank(patchPath, removeMarkedLines(patchText));
   }
 
   let credentialsPath: string | null = null;
   const credentialsFile = join(home, ".credentials.yaml");
   const credText = readOptional(credentialsFile);
-  if (credText !== null && credText.includes(MARKER_START)) {
+  if (credText?.includes(MARKER_START)) {
     credentialsPath = credentialsFile;
     writeOrUnlinkIfBlank(credentialsFile, removeMarkedLines(credText));
     chmodSync(credentialsFile, 0o600);

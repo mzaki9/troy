@@ -1,15 +1,19 @@
 import { enrich } from "../modelsdev";
 import { commandCodeReply, wrapCommandCode } from "../providers/commandcode";
 import {
+  agentForModel,
   classifyFreebuffError,
   discoverFreebuffToken,
+  ensureFreebuffRun,
   ensureFreebuffSession,
   freebuffJsonReply,
   invalidateFreebuff,
+  invalidateFreebuffRun,
+  invalidateFreebuffSession,
   wrapFreebuff,
 } from "../providers/freebuff";
 import { type CavemanLevel, injectCaveman, injectPonytail, type PonytailLevel } from "../providers/inject";
-import { isReasoningModel, resolveEffortAlias } from "../providers/reasoning";
+import { resolveEffortAlias } from "../providers/reasoning";
 import { compressMessages } from "../rtk";
 import type { Connection, Store } from "../store/db";
 import { type CooldownStore, parseRetryAfter } from "./cooldown";
@@ -208,9 +212,9 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
       continue;
     }
     // thinking setup — effort aliases inject reasoning_effort ("o3-mini-high"),
-    // and it is silently dropped for non-reasoning models (OmniRoute behavior)
+    // and it is silently dropped for non-reasoning models (models.dev is source of truth)
     const effBody: Record<string, unknown> = { ...body, model };
-    if (isReasoningModel(model)) {
+    if (meta.reasoning) {
       if (effort) effBody.reasoning_effort = effort;
     } else {
       delete effBody.reasoning_effort;
@@ -280,8 +284,16 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
         `→ ${provider}/${model} via ${conn.name ?? conn.id.slice(0, 8)}${combo ? ` [combo ${combo.name}]` : ""}`,
       );
 
-      // freebuff: ensure the free session, then wrap the body in the CLI envelope
+      // freebuff: ensure the free session + agent run, then wrap the body in the CLI envelope
       let fbJson: string | null = null;
+      let fbRun: {
+        runId: string;
+        traceSessionId: string;
+        step: number;
+        agentId: string;
+        origin: string;
+        conn: Connection;
+      } | null = null;
       if (fb) {
         try {
           if (!conn.api_key) {
@@ -292,14 +304,21 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
           }
           const origin = new URL(buildBaseUrl(def, conn)).origin;
           const sess = await ensureFreebuffSession(origin, conn, model);
+          const agentId = agentForModel(model);
+          const run = await ensureFreebuffRun(origin, conn, agentId);
           const enveloped = wrapFreebuff(effBody, {
-            runId: crypto.randomUUID(),
+            runId: run.runId,
             instanceId: sess.instanceId || undefined,
+            traceSessionId: run.traceSessionId,
+            step: run.step,
+            costMode: "free",
           });
           fbJson = JSON.stringify(enveloped);
+          fbRun = { ...run, agentId, origin, conn };
         } catch (err) {
           const msg = err instanceof Error ? err.message : "freebuff session failed";
           const ra = (err as { retryAfterMs?: number }).retryAfterMs;
+          if (msg.includes("runId") || msg.includes("START")) invalidateFreebuffRun(conn.id);
           deps.cooldowns.fail(conn.id, model, 0, msg, circuitKey, typeof ra === "number" ? ra : undefined);
           lastError = msg;
           lastStatus = 502;
@@ -349,7 +368,24 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
           if (fb && !stream) {
             deps.cooldowns.success(conn.id, model, circuitKey);
             try {
-              return await freebuffJsonReply(res);
+              const reply = await freebuffJsonReply(res);
+              // log the buffered freebuff reply (usage is inside the generated JSON)
+              const txt = await reply
+                .clone()
+                .text()
+                .catch(() => "");
+              const tokens = usageOf(txt);
+              deps.onLog({
+                provider,
+                model,
+                combo: combo?.name,
+                status: "200 OK",
+                latency_ms: now() - t0,
+                ...(tokens ? { tokens } : {}),
+                rtk_saved: rtkSaved,
+                rtk_seen: rtkSeen,
+              });
+              return reply;
             } catch (err) {
               const msg = err instanceof Error ? err.message : "freebuff stream error";
               deps.cooldowns.fail(conn.id, model, 0, msg, circuitKey);
@@ -427,9 +463,17 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
 
         const bodyText = await res.text().catch(() => "");
         if (cc) lastRaw = { body: bodyText, status: res.status };
-        // freebuff: typed classification → session invalidation + server retry hints
+        // freebuff: typed classification → session/run invalidation + server retry hints
         const fbErr = fb ? classifyFreebuffError(res.status, bodyText) : null;
-        if (fbErr?.invalidate) invalidateFreebuff(conn.id);
+        if (fbErr?.invalidate) {
+          invalidateFreebuff(conn.id);
+          if (bodyText.includes("runId")) invalidateFreebuffRun(conn.id);
+          else if (fbRun) invalidateFreebuffSession(conn.id, model);
+        }
+        // runId not found is a run-level invalidate even when not 409
+        if (fb && bodyText.includes("runId Not Found") && fbRun) {
+          invalidateFreebuffRun(conn.id, fbRun.agentId);
+        }
         deps.cooldowns.fail(
           conn.id,
           model,
