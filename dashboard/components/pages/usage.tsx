@@ -353,158 +353,167 @@ export function UsagePage() {
     <>
       {stats.error ? (
         <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
-          Failed to load stats: {stats.error.message} — <button type="button" onClick={() => stats.refetch()} className="underline">retry</button>
+          Failed to load stats: {stats.error.message} —{" "}
+          <button type="button" onClick={() => stats.refetch()} className="underline">
+            retry
+          </button>
         </div>
       ) : null}
       {daily.error ? (
         <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
-          Failed to load daily chart: {daily.error.message} — <button type="button" onClick={() => daily.refetch()} className="underline">retry</button>
+          Failed to load daily chart: {daily.error.message} —{" "}
+          <button type="button" onClick={() => daily.refetch()} className="underline">
+            retry
+          </button>
         </div>
       ) : null}
       {logs.error ? (
         <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
-          Failed to load logs: {logs.error.message} — <button type="button" onClick={() => logs.refetch()} className="underline">retry</button>
+          Failed to load logs: {logs.error.message} —{" "}
+          <button type="button" onClick={() => logs.refetch()} className="underline">
+            retry
+          </button>
         </div>
       ) : null}
-    <Tabs defaultValue="overview">
-      <TabsList>
-        <TabsTrigger value="overview">Overview</TabsTrigger>
-        <TabsTrigger value="details">Details</TabsTrigger>
-      </TabsList>
+      <Tabs defaultValue="overview">
+        <TabsList>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="details">Details</TabsTrigger>
+        </TabsList>
 
-      <TabsContent value="overview" className="view-switch space-y-4">
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {!t ? (
-            <StatSkeletons />
-          ) : (
-            <>
-              <StatCard label="Total Requests" value={fmt.format(t.requests)} />
-              <StatCard
-                label="Success rate"
-                value={rate !== undefined ? `${rate.toFixed(1)}%` : "—"}
-                sub={t.requests && rate !== undefined && rate < 100 ? `${fmt.format(t.fail)} failed` : ""}
-                subClass={t.fail > 0 ? "text-red-600 dark:text-red-400" : undefined}
-                valueClass={rate !== undefined ? rateClass(rate) : ""}
-              />
-              <StatCard
-                label="Latency"
-                value={t.requests ? short(t.avg_ms) : "—"}
-                sub={t.requests ? `p95 ${short(t.p95_ms)}` : ""}
-              />
-              {(() => {
-                const tin = t.tokens_in ?? 0;
-                const tout = t.tokens_out ?? 0;
-                return (
-                  <StatCard
-                    label="Tokens"
-                    value={tok(tin + tout)}
-                    sub={`↑ ${tok(tin)} in · ↓ ${tok(tout)} out`}
-                    title={`${tin.toLocaleString()} in / ${tout.toLocaleString()} out`}
-                  />
-                );
-              })()}
-              {(() => {
-                const saved = t.rtk_saved ?? 0;
-                const seen = t.rtk_seen ?? 0;
-                if (seen <= 0) return null; // RTK off or nothing compressed — no zero-clutter card
-                const pct = Math.round((saved / seen) * 100);
-                const hit = t.requests ? Math.round(((t.rtk_hits ?? 0) / t.requests) * 100) : 0;
-                return (
-                  <StatCard
-                    label="RTK saved"
-                    value={`~${tok(Math.round(saved / 4))}`}
-                    sub={`${pct}% of tool output · ${hit}% of reqs`}
-                    title={`est. tokens — ${saved.toLocaleString()} of ${seen.toLocaleString()} chars compressed away`}
-                  />
-                );
-              })()}
-            </>
-          )}
-        </div>
+        <TabsContent value="overview" className="view-switch space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {!t ? (
+              <StatSkeletons />
+            ) : (
+              <>
+                <StatCard label="Total Requests" value={fmt.format(t.requests)} />
+                <StatCard
+                  label="Success rate"
+                  value={rate !== undefined ? `${rate.toFixed(1)}%` : "—"}
+                  sub={t.requests && rate !== undefined && rate < 100 ? `${fmt.format(t.fail)} failed` : ""}
+                  subClass={t.fail > 0 ? "text-red-600 dark:text-red-400" : undefined}
+                  valueClass={rate !== undefined ? rateClass(rate) : ""}
+                />
+                <StatCard
+                  label="Latency"
+                  value={t.requests ? short(t.avg_ms) : "—"}
+                  sub={t.requests ? `p95 ${short(t.p95_ms)}` : ""}
+                />
+                {(() => {
+                  const tin = t.tokens_in ?? 0;
+                  const tout = t.tokens_out ?? 0;
+                  return (
+                    <StatCard
+                      label="Tokens"
+                      value={tok(tin + tout)}
+                      sub={`↑ ${tok(tin)} in · ↓ ${tok(tout)} out`}
+                      title={`${tin.toLocaleString()} in / ${tout.toLocaleString()} out`}
+                    />
+                  );
+                })()}
+                {(() => {
+                  const saved = t.rtk_saved ?? 0;
+                  const seen = t.rtk_seen ?? 0;
+                  if (seen <= 0) return null; // RTK off or nothing compressed — no zero-clutter card
+                  const pct = Math.round((saved / seen) * 100);
+                  const hit = t.requests ? Math.round(((t.rtk_hits ?? 0) / t.requests) * 100) : 0;
+                  return (
+                    <StatCard
+                      label="RTK saved"
+                      value={`~${tok(Math.round(saved / 4))}`}
+                      sub={`${pct}% of tool output · ${hit}% of reqs`}
+                      title={`est. tokens — ${saved.toLocaleString()} of ${seen.toLocaleString()} chars compressed away`}
+                    />
+                  );
+                })()}
+              </>
+            )}
+          </div>
 
-        {t && t.requests === 0 ? (
-          <Card className="border-dashed">
-            <CardContent className="flex flex-col items-center gap-3 py-8 text-center">
-              <p className="text-sm font-medium">No traffic yet</p>
-              <p className="max-w-md text-xs text-muted-foreground">
-                Add a provider key and pick a model to start routing. Your first request will appear here.
-              </p>
-              <button
-                type="button"
-                onClick={() => (location.hash = "#providers")}
-                className="rounded-full bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
-              >
-                Go to Providers →
-              </button>
+          {t && t.requests === 0 ? (
+            <Card className="border-dashed">
+              <CardContent className="flex flex-col items-center gap-3 py-8 text-center">
+                <p className="text-sm font-medium">No traffic yet</p>
+                <p className="max-w-md text-xs text-muted-foreground">
+                  Add a provider key and pick a model to start routing. Your first request will appear here.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => (location.hash = "#providers")}
+                  className="rounded-full bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+                >
+                  Go to Providers →
+                </button>
+              </CardContent>
+            </Card>
+          ) : null}
+
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+            <Card className="min-h-[380px]">
+              <CardHeader className="flex-row items-center justify-between">
+                <CardTitle>Requests per day</CardTitle>
+                <Badge variant="secondary">last {days} days · stacked by model</Badge>
+              </CardHeader>
+              <CardContent>
+                <DailyChart data={daily.data} />
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex-row items-center justify-between">
+                <CardTitle>Provider health</CardTitle>
+                <Badge variant="secondary">{stats.data ? `${stats.data.byProvider.length} providers` : "—"}</Badge>
+              </CardHeader>
+              <CardContent>
+                {stats.data ? (
+                  <ProviderBars byProvider={stats.data.byProvider} />
+                ) : (
+                  <div className="space-y-3.5">
+                    {Array.from({ length: 4 }).map((_, i) => (
+                      <div key={i} className="space-y-1.5">
+                        <Skeleton className="h-4 w-2/3" />
+                        <Skeleton className="h-2 w-full" />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Recent requests</CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <RequestsTable rows={logs.data} limit={20} />
             </CardContent>
           </Card>
-        ) : null}
+        </TabsContent>
 
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-          <Card className="min-h-[380px]">
-            <CardHeader className="flex-row items-center justify-between">
-              <CardTitle>Requests per day</CardTitle>
-              <Badge variant="secondary">last {days} days · stacked by model</Badge>
+        <TabsContent value="details" className="view-switch space-y-4">
+          <PeriodPills value={period} onChange={setPeriod} />
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Usage by model</CardTitle>
             </CardHeader>
-            <CardContent>
-              <DailyChart data={daily.data} />
+            <CardContent className="pt-0">
+              <ModelTable rows={stats.data?.byModel} />
             </CardContent>
           </Card>
 
           <Card>
-            <CardHeader className="flex-row items-center justify-between">
-              <CardTitle>Provider health</CardTitle>
-              <Badge variant="secondary">{stats.data ? `${stats.data.byProvider.length} providers` : "—"}</Badge>
+            <CardHeader>
+              <CardTitle>History</CardTitle>
             </CardHeader>
-            <CardContent>
-              {stats.data ? (
-                <ProviderBars byProvider={stats.data.byProvider} />
-              ) : (
-                <div className="space-y-3.5">
-                  {Array.from({ length: 4 }).map((_, i) => (
-                    <div key={i} className="space-y-1.5">
-                      <Skeleton className="h-4 w-2/3" />
-                      <Skeleton className="h-2 w-full" />
-                    </div>
-                  ))}
-                </div>
-              )}
+            <CardContent className="pt-0">
+              <RequestsTable rows={logs.data} limit={100} />
             </CardContent>
           </Card>
-        </div>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Recent requests</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <RequestsTable rows={logs.data} limit={20} />
-          </CardContent>
-        </Card>
-      </TabsContent>
-
-      <TabsContent value="details" className="view-switch space-y-4">
-        <PeriodPills value={period} onChange={setPeriod} />
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Usage by model</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <ModelTable rows={stats.data?.byModel} />
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>History</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <RequestsTable rows={logs.data} limit={100} />
-          </CardContent>
-        </Card>
-      </TabsContent>
-    </Tabs>
+        </TabsContent>
+      </Tabs>
     </>
   );
 }

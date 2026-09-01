@@ -166,7 +166,15 @@ export class CooldownStore {
     return this.lockExpiry(id, key) <= now();
   }
 
-  fail(id: string, key: string, status: number, errText: string, circuitKey = key, retryAfterMs?: number | null) {
+  fail(
+    id: string,
+    key: string,
+    status: number,
+    errText: string,
+    circuitKey = key,
+    retryAfterMs?: number | null,
+    requestId?: string,
+  ) {
     const s = this.ensure(id);
     const cls = classify(status, errText, s.backoff);
     // server Retry-After wins over local backoff when sane (dsh llm-retry rule)
@@ -191,12 +199,13 @@ export class CooldownStore {
     const reason = extractReason(errText);
     if (reason) this.reasons.set(`${id}|${key}`, reason);
     this.countFailure(circuitKey);
+    const prefix = requestId ? `[${requestId.slice(0, 8)}] ` : "";
     this.emit(
-      `cooldown ${key} ${status || "net"} → ${Math.round(cooldownMs / 1000)}s (acct ${shortId(id)})${reason ? ` — ${reason}` : ""}`,
+      `${prefix}cooldown ${key} ${status || "net"} → ${Math.round(cooldownMs / 1000)}s (acct ${shortId(id)})${reason ? ` — ${reason}` : ""}`,
     );
   }
 
-  success(id: string, key: string, circuitKey = key) {
+  success(id: string, key: string, circuitKey = key, requestId?: string) {
     const s = this.states.get(id);
     if (!s) return;
     // trace only real recoveries — a plain 200 with nothing locked is noise
@@ -216,7 +225,10 @@ export class CooldownStore {
     }
     // half-open probe succeeded → close the circuit
     this.circuits.delete(circuitKey);
-    if (wasLocked) this.emit(`clear ${key} (acct ${shortId(id)})`);
+    if (wasLocked) {
+      const prefix = requestId ? `[${requestId.slice(0, 8)}] ` : "";
+      this.emit(`${prefix}clear ${key} (acct ${shortId(id)})`);
+    }
   }
 
   private countFailure(key: string) {

@@ -23,7 +23,13 @@ const cooldowns = CooldownStore.replay(
 // per-request routing trace — off by default, TROY_TRACE=1 for full play-by-play
 const TRACE = process.env.TROY_TRACE === "1";
 
-const { server } = buildTroyServer({ store, cooldowns, port: PORT, trace: TRACE, enableBackgroundTasks: true });
+const { server, shutdown } = buildTroyServer({
+  store,
+  cooldowns,
+  port: PORT,
+  trace: TRACE,
+  enableBackgroundTasks: true,
+});
 
 console.log(`troy → ${server.url}  proxy: ${server.url}v1  dashboard: ${server.url}`);
 startModelsDevRefresh((msg) => console.log(`  ${msg}`));
@@ -32,3 +38,41 @@ if (!store.getDashPass()) {
     `  dashboard password: ${DEFAULT_DASHBOARD_PASS} (default — change it under Settings → Dashboard password)`,
   );
 }
+
+let shuttingDown = false;
+function gracefulShutdown(signal: string) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`\n[shutdown] ${signal} received, draining...`);
+  try {
+    shutdown();
+  } catch {}
+  try {
+    store.stopLogFlush();
+  } catch {}
+  try {
+    const s = server as unknown as { stop?: (force?: boolean) => void };
+    if (typeof s.stop === "function") {
+      try {
+        s.stop(true);
+      } catch {
+        try {
+          s.stop();
+        } catch {}
+      }
+    }
+  } catch {}
+  try {
+    store.close();
+  } catch {}
+  setTimeout(() => {
+    console.log("[shutdown] complete");
+    process.exit(0);
+  }, 500).unref?.();
+  setTimeout(() => {
+    console.error("[shutdown] forced exit after 10s");
+    process.exit(1);
+  }, 10_000).unref?.();
+}
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));

@@ -106,9 +106,9 @@ describe("Anthropic + Responses translation via HTTP (integrated)", () => {
       method: "POST",
       body: JSON.stringify({ model: "openai/gpt-4o", input: "hello" }),
     });
-    expect((t.upstream.getLastPayload() as { messages: { content: string }[] }).messages).toEqual([
-      { role: "user", content: "hello" },
-    ]);
+    expect(
+      (t.upstream.getLastPayload() as unknown as { messages: { role: string; content: string }[] }).messages,
+    ).toEqual([{ role: "user", content: "hello" }]);
     const lookBody = JSON.stringify({
       choices: [
         {

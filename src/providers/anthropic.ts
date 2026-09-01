@@ -344,25 +344,51 @@ async function anthropicError(res: Response): Promise<Response> {
 }
 
 export async function handleMessages(body: Record<string, unknown>, deps: ChatDeps): Promise<Response> {
-  const chatBody = toChatBody(body);
-  const res = await handleChat(chatBody, deps);
-  if (!res.ok) return anthropicError(res);
-  const streaming = chatBody.stream === true && (res.headers.get("content-type") ?? "").includes("text/event-stream");
-  if (!streaming) {
-    const text = await res.text();
-    try {
-      return new Response(JSON.stringify(toAnthropic(JSON.parse(text), String(chatBody.model))), {
-        status: 200,
-        headers: jsonHeaders,
-      });
-    } catch {
-      return res;
+  try {
+    const chatBody = toChatBody(body);
+    const res = await handleChat(chatBody, deps);
+    if (!res.ok) {
+      const errRes = await anthropicError(res);
+      if (deps.requestId) errRes.headers.set("x-request-id", deps.requestId);
+      return errRes;
     }
+    const streaming = chatBody.stream === true && (res.headers.get("content-type") ?? "").includes("text/event-stream");
+    if (!streaming) {
+      const text = await res.text();
+      try {
+        const headers = new Headers(jsonHeaders);
+        if (deps.requestId) headers.set("x-request-id", deps.requestId);
+        return new Response(JSON.stringify(toAnthropic(JSON.parse(text), String(chatBody.model))), {
+          status: 200,
+          headers,
+        });
+      } catch {
+        if (deps.requestId) res.headers.set("x-request-id", deps.requestId);
+        return res;
+      }
+    }
+    const st = freshState(String(chatBody.model));
+    const stream = sseTranslate(
+      (ev) => chatChunkToAnthropicEvents(ev, st),
+      (events) => finalize(st, events),
+    );
+    const headers = new Headers(sseHeaders);
+    if (deps.requestId) headers.set("x-request-id", deps.requestId);
+    return new Response(res.body!.pipeThrough(stream), { status: 200, headers });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error ? err.stack : undefined;
+    try {
+      console.error(`[panic] handleMessages requestId=${deps.requestId ?? "-"} ${msg}`, stack ?? "");
+    } catch {}
+    const headers: Record<string, string> = { "content-type": "application/json", "access-control-allow-origin": "*" };
+    if (deps.requestId) headers["x-request-id"] = deps.requestId;
+    return new Response(
+      JSON.stringify({ type: "error", error: { type: "api_error", message: `panic: ${msg.slice(0, 200)}` } }),
+      {
+        status: 500,
+        headers,
+      },
+    );
   }
-  const st = freshState(String(chatBody.model));
-  const stream = sseTranslate(
-    (ev) => chatChunkToAnthropicEvents(ev, st),
-    (events) => finalize(st, events),
-  );
-  return new Response(res.body!.pipeThrough(stream), { status: 200, headers: sseHeaders });
 }

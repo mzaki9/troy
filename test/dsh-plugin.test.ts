@@ -52,7 +52,7 @@ describe("dsh plugin (integrated via FS)", () => {
       const { pluginPath } = installDshPlugin({ baseUrl, apiKey, home: dir });
       return (await import(pluginPath)).apply as (ctx: unknown) => Promise<void>;
     }
-    (globalThis as { fetch: unknown }).fetch = (() =>
+    (globalThis as unknown as { fetch: unknown }).fetch = () =>
       Promise.resolve(
         new Response(
           JSON.stringify({
@@ -63,7 +63,7 @@ describe("dsh plugin (integrated via FS)", () => {
           }),
           { status: 200 },
         ),
-      )) as typeof fetch;
+      );
     const updates: unknown[] = [];
     const apply = await loadApply("http://localhost:31337/v1///", "sk-live");
     await apply({

@@ -109,7 +109,8 @@ export function agentForModel(model: string): string {
 
 export function getFreebuffSessions(): { key: string; instanceId: string; expiresAt: number }[] {
   const out: { key: string; instanceId: string; expiresAt: number }[] = [];
-  for (const [k, v] of sessions) if (v.sess) out.push({ key: k, instanceId: v.sess.instanceId, expiresAt: v.sess.expiresAt });
+  for (const [k, v] of sessions)
+    if (v.sess) out.push({ key: k, instanceId: v.sess.instanceId, expiresAt: v.sess.expiresAt });
   return out;
 }
 
@@ -117,14 +118,24 @@ export async function pauseFreebuff(connId?: string, model?: string): Promise<nu
   let n = 0;
   if (connId && model) {
     const k = sessionKey(connId, model);
-    if (sessions.has(k)) { sessions.delete(k); n++; }
+    if (sessions.has(k)) {
+      sessions.delete(k);
+      n++;
+    }
     // also clear runs for this conn
-    for (const rk of [...runs.keys()]) if (rk.startsWith(`${connId}:`)) { runs.delete(rk); }
+    for (const rk of [...runs.keys()])
+      if (rk.startsWith(`${connId}:`)) {
+        runs.delete(rk);
+      }
     if (n) return 1;
     return 0;
   }
   if (connId) {
-    for (const k of [...sessions.keys()]) if (k === connId || k.startsWith(`${connId}:`)) { sessions.delete(k); n++; }
+    for (const k of [...sessions.keys()])
+      if (k === connId || k.startsWith(`${connId}:`)) {
+        sessions.delete(k);
+        n++;
+      }
     for (const k of [...runs.keys()]) if (k === connId || k.startsWith(`${connId}:`)) runs.delete(k);
     return n;
   }

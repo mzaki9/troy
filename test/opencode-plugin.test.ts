@@ -25,8 +25,7 @@ describe("opencode plugin (integrated via FS + fetch mock)", () => {
       const { path } = installOpenCodePlugin({ baseUrl, apiKey, dir });
       return (await import(path)).default as { id: string; setup: (ctx: unknown) => Promise<() => void> };
     }
-    // success path
-    (globalThis as { fetch: unknown }).fetch = async () =>
+    (globalThis as unknown as { fetch: unknown }).fetch = async () =>
       new Response(
         JSON.stringify({
           object: "list",

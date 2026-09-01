@@ -102,6 +102,22 @@ mkdir -p ~/.config/opencode && cat > ~/.config/opencode/opencode.json << 'EOF'
 EOF
 ```
 
+## Oh My Pi (omp)
+
+One-liner — installs an extension that registers every chosen model + combo as `troy/<model>`:
+```bash
+curl -X POST http://localhost:31337/api/install-omp-plugin
+# restart omp, pick any troy/... model
+# omp --model troy/openai/gpt-4o "hi"
+# omp --model troy/my-combo "hi"
+```
+Or manual — the same file the installer writes, editable by hand:
+```bash
+mkdir -p ~/.omp/agent/extensions
+# copy the template from src/omp-plugin.ts or hit the POST endpoint above
+# honours PI_CODING_AGENT_DIR if set, else ~/.omp/agent
+```
+
 All snippets also work with combos (`my-combo` instead of `openai/gpt-4o`); the proxy fans out.
 
 See `dashboard Tools` page for live snippets with your current key.

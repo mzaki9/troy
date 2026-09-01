@@ -259,11 +259,7 @@ export function endMark(body: ReadableStream<Uint8Array>, onEnd: () => void): Re
  *  frame, then close (dsh per-read idle watchdog). Covers mid-stream death
  *  that takeHead's first-chunk guard cannot see. Also emits `: ping` keepalive
  *  every 15s so nginx/proxy idle timeouts don't close long reasoning gaps. */
-export function idleGuard(
-  body: ReadableStream<Uint8Array>,
-  ms: number,
-  pingMs = 15_000,
-): ReadableStream<Uint8Array> {
+export function idleGuard(body: ReadableStream<Uint8Array>, ms: number, pingMs = 15_000): ReadableStream<Uint8Array> {
   const reader = body.getReader();
   let pingTimer: ReturnType<typeof setInterval> | undefined;
   let closed = false;

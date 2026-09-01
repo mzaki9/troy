@@ -34,6 +34,7 @@ export interface Settings {
   caveman_level: string;
   ponytail_level: string;
   strategy: string;
+  auto_ban: number;
 }
 
 /** Troy's own API key — the secret CLI tools present to the /v1 proxy. `on` mirrors
@@ -64,12 +65,12 @@ export interface StateEvent {
   until_ms?: number | null;
   backoff_level?: number | null;
 }
-
 const DEFAULTS: Settings = {
   rtk_on: 1,
   caveman_level: "off",
   ponytail_level: "off",
   strategy: "fill-first",
+  auto_ban: 0,
 };
 
 /** Split "provider/model" — guards specs without "/" so the last character
@@ -82,22 +83,43 @@ function splitSpec(spec: string): { provider: string; model: string } {
 
 export class Store {
   private db: Database;
-  private logQueue: [string, string, string, string | null, string, number, string, number, number][] = [];
+  private logQueue: [string, string, string, string | null, string, number, string, number, number, string | null][] =
+    [];
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   private lastTrim = 0;
   private stateTrim = 0;
 
   constructor(path: string) {
     this.db = new Database(path);
-    this.db.run("PRAGMA journal_mode = WAL;");
-    this.db.run("PRAGMA synchronous = NORMAL;");
+    try {
+      this.db.exec("PRAGMA journal_mode=WAL;");
+    } catch (e) {
+      try {
+        console.log(`  WAL unavailable — falling back to DELETE (${e instanceof Error ? e.message : String(e)})`);
+      } catch {}
+      try {
+        this.db.exec("PRAGMA journal_mode=DELETE;");
+      } catch {}
+    }
+    try {
+      this.db.exec("PRAGMA busy_timeout=30000;");
+    } catch {}
+    try {
+      this.db.exec("PRAGMA synchronous=NORMAL;");
+    } catch {}
+    try {
+      this.db.exec("PRAGMA foreign_keys=ON;");
+    } catch {}
     // memory budget: this proxy owns no hot dataset — cap the page cache at ~1 MiB
     // and checkpoint WAL often so the -wal file stays tiny
-    this.db.run("PRAGMA cache_size = -1024;");
-    this.db.run("PRAGMA wal_autocheckpoint = 500;");
+    try {
+      this.db.exec("PRAGMA cache_size=-1024;");
+    } catch {}
+    try {
+      this.db.exec("PRAGMA wal_autocheckpoint=500;");
+    } catch {}
     runMigrations(this.db);
   }
-
   get raw() {
     return this.db;
   }
@@ -360,8 +382,9 @@ export class Store {
     tokens?: Record<string, number>;
     rtk_saved?: number;
     rtk_seen?: number;
+    request_id?: string | null;
   }) {
-    const rec: [string, string, string, string | null, string, number, string, number, number] = [
+    const rec: [string, string, string, string | null, string, number, string, number, number, string | null] = [
       new Date().toISOString(),
       row.provider,
       row.model,
@@ -371,6 +394,7 @@ export class Store {
       JSON.stringify(row.tokens ?? {}),
       row.rtk_saved ?? 0,
       row.rtk_seen ?? 0,
+      row.request_id ?? null,
     ];
     if (this.logQueue.length >= 10_000) this.logQueue.shift();
     this.logQueue.push(rec);
@@ -378,8 +402,38 @@ export class Store {
 
   startLogFlush(intervalMs = 2000) {
     if (this.flushTimer) return;
-    this.flushTimer = setInterval(() => this.flushLogs(), intervalMs);
+    this.flushTimer = setInterval(() => {
+      try {
+        this.flushLogs();
+      } catch (err) {
+        try {
+          console.error("[troy] flushLogs panic", err instanceof Error ? (err.stack ?? err.message) : String(err));
+        } catch {}
+      }
+    }, intervalMs);
     this.flushTimer.unref();
+  }
+
+  stopLogFlush(): void {
+    if (this.flushTimer) {
+      clearInterval(this.flushTimer);
+      this.flushTimer = null;
+    }
+    try {
+      this.flushLogs();
+    } catch {}
+  }
+
+  close(): void {
+    try {
+      this.stopLogFlush();
+    } catch {}
+    try {
+      this.db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
+    } catch {}
+    try {
+      this.db.close();
+    } catch {}
   }
 
   flushLogs() {
@@ -390,7 +444,7 @@ export class Store {
         for (const row of batch) {
           this.db
             .query(
-              "INSERT INTO usage_history (ts, provider, model, combo, status, latency_ms, tokens, rtk_saved, rtk_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              "INSERT INTO usage_history (ts, provider, model, combo, status, latency_ms, tokens, rtk_saved, rtk_seen, request_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .run(...row);
         }

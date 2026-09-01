@@ -57,10 +57,29 @@ export default function App() {
 
   return (
     <div className="dot-grid flex h-screen overflow-hidden text-foreground">
-      <Sidebar page={page} onNavigate={(p) => { navigate(p); setDrawerOpen(false); }} open={drawerOpen} onClose={() => setDrawerOpen(false)} />
-      {drawerOpen ? <button type="button" aria-label="close menu" onClick={() => setDrawerOpen(false)} className="fixed inset-0 z-30 bg-black/30 lg:hidden" /> : null}
+      <Sidebar
+        page={page}
+        onNavigate={(p) => {
+          navigate(p);
+          setDrawerOpen(false);
+        }}
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+      />
+      {drawerOpen ? (
+        <button
+          type="button"
+          aria-label="close menu"
+          onClick={() => setDrawerOpen(false)}
+          className="fixed inset-0 z-30 bg-black/30 lg:hidden"
+        />
+      ) : null}
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <Topbar page={page} onLogout={() => setSession({ ...session, authed: false })} onMenu={() => setDrawerOpen((v) => !v)} />
+        <Topbar
+          page={page}
+          onLogout={() => setSession({ ...session, authed: false })}
+          onMenu={() => setDrawerOpen((v) => !v)}
+        />
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5 lg:p-8">
           <div key={page} className="view-switch mx-auto max-w-7xl space-y-5">
             {page === "usage" && <UsagePage />}

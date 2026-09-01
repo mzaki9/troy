@@ -13,7 +13,17 @@ export const PAGES: { id: PageId; label: string; desc: string; icon: LucideIcon 
 
 export type PageId = "usage" | "providers" | "combos" | "tools" | "settings";
 
-export function Sidebar({ page, onNavigate, open, onClose }: { page: PageId; onNavigate: (p: PageId) => void; open?: boolean; onClose?: () => void }) {
+export function Sidebar({
+  page,
+  onNavigate,
+  open,
+  onClose,
+}: {
+  page: PageId;
+  onNavigate: (p: PageId) => void;
+  open?: boolean;
+  onClose?: () => void;
+}) {
   const navRef = useRef<HTMLElement | null>(null);
   const btnRefs = useRef<Partial<Record<PageId, HTMLButtonElement | null>>>({});
   const [ind, setInd] = useState<{ top: number; height: number } | null>(null);
@@ -48,10 +58,17 @@ export function Sidebar({ page, onNavigate, open, onClose }: { page: PageId; onN
           </span>
           <span className="min-w-0">
             <span className="block text-[15px] leading-tight font-semibold tracking-tight">troy</span>
-            <span className="block text-[10px] tracking-[0.08em] text-muted-foreground uppercase">minimal ai router</span>
+            <span className="block text-[10px] tracking-[0.08em] text-muted-foreground uppercase">
+              minimal ai router
+            </span>
           </span>
         </div>
-        <button type="button" onClick={onClose} aria-label="close menu" className="rounded-full p-1.5 hover:bg-muted lg:hidden">
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="close menu"
+          className="rounded-full p-1.5 hover:bg-muted lg:hidden"
+        >
           <X className="size-4" />
         </button>
       </div>

@@ -361,7 +361,7 @@ describe("proxy E2E via HTTP (integrated)", () => {
       ).status,
     ).toBe(200);
     t.store.flushLogs();
-    expect(t.store.listLogs(10).some((l) => (l as { provider: string }).provider === "deepseek")).toBe(true);
+    expect(t.store.listLogs(10).some((l) => (l as unknown as { provider: string }).provider === "deepseek")).toBe(true);
 
     // cooldown replay
     t.upstream.setBehavior("bad2", {

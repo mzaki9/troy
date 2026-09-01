@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 
 export async function api<T>(path: string, opts?: RequestInit): Promise<T> {
-  const res = await fetch(path, { headers: { "content-type": "application/json" }, cache: "no-store", ...opts } as RequestInit);
+  const res = await fetch(path, {
+    headers: { "content-type": "application/json" },
+    cache: "no-store",
+    ...opts,
+  } as RequestInit);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     let detail = text;

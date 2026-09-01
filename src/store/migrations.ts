@@ -38,7 +38,10 @@ export function runMigrations(db: Database): void {
         combo TEXT,
         status TEXT,
         latency_ms INTEGER,
-        tokens TEXT DEFAULT '{}'
+        tokens TEXT DEFAULT '{}',
+        rtk_saved INTEGER NOT NULL DEFAULT 0,
+        rtk_seen INTEGER NOT NULL DEFAULT 0,
+        request_id TEXT
       );      CREATE INDEX IF NOT EXISTS idx_conn_provider ON connections(provider, is_active, priority);
       CREATE INDEX IF NOT EXISTS idx_uh_ts ON usage_history(ts DESC);
       CREATE TABLE IF NOT EXISTS state_events (
@@ -79,5 +82,8 @@ export function runMigrations(db: Database): void {
   if (!ucols.some((c) => c.name === "rtk_saved")) {
     db.run("ALTER TABLE usage_history ADD COLUMN rtk_saved INTEGER NOT NULL DEFAULT 0");
     db.run("ALTER TABLE usage_history ADD COLUMN rtk_seen INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!ucols.some((c) => c.name === "request_id")) {
+    db.run("ALTER TABLE usage_history ADD COLUMN request_id TEXT");
   }
 }

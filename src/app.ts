@@ -11,11 +11,13 @@ import {
 import { modelsList, providerCatalog, stats } from "./dash/stats";
 import { clearDshPlugin, installDshPlugin } from "./dsh-plugin";
 import { enrich, enrichmentStatus } from "./modelsdev";
+import { clearOmpPlugin, installOmpPlugin } from "./omp-plugin";
 import { installOpenCodePlugin } from "./opencode-plugin";
 import { handleMessages } from "./providers/anthropic";
 import { discoverFreebuffToken, getFreebuffSessions, pauseFreebuff } from "./providers/freebuff";
 import { handleResponses } from "./providers/responses";
 import type { CooldownStore } from "./proxy/cooldown";
+import { FixedWindowLimiter, parseRateLimit } from "./proxy/rateLimit";
 import {
   customProviderIds,
   getProvider,
@@ -42,6 +44,7 @@ export interface TroyServer {
   url: string;
   getApiAuth: () => ApiAuth;
   getDashPass: () => DashPass | null;
+  shutdown: () => void;
 }
 
 const SESSION_COOKIE = "troy_session";
@@ -117,14 +120,28 @@ function readBody(request: Request): Promise<unknown> {
   const isProxy = request.url.includes("/v1/");
   const limit = isProxy ? BODY_LIMIT_PROXY : BODY_LIMIT_API;
   if (len > limit) return Promise.resolve(null);
-  return request.text().then((t) => {
-    if (t.length > limit) return null;
-    try {
-      return JSON.parse(t);
-    } catch {
-      return null;
-    }
-  });
+  if (request.signal?.aborted) return Promise.resolve(null);
+  // use text() but handle abort explicitly — ensure reader cancel on abort
+  return request.text().then(
+    (t) => {
+      if (t.length > limit) return null;
+      try {
+        return JSON.parse(t);
+      } catch {
+        return null;
+      }
+    },
+    (err) => {
+      if (err instanceof Error && (err.name === "AbortError" || request.signal?.aborted)) {
+        try {
+          const r = request.body?.getReader();
+          r?.cancel().catch(() => {});
+        } catch {}
+        return null;
+      }
+      throw err;
+    },
+  );
 }
 
 function isV1Path(path: string, method: string): boolean {
@@ -190,8 +207,14 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
   let sessionSweep: ReturnType<typeof setInterval> | null = null;
   if (enableBackgroundTasks) {
     sessionSweep = setInterval(() => {
-      const now = Date.now();
-      for (const [token, exp] of sessions) if (exp < now) sessions.delete(token);
+      try {
+        const now = Date.now();
+        for (const [token, exp] of sessions) if (exp < now) sessions.delete(token);
+      } catch (err) {
+        try {
+          console.error("[troy] sessionSweep panic", err instanceof Error ? (err.stack ?? err.message) : String(err));
+        } catch {}
+      }
     }, 3_600_000);
     sessionSweep.unref?.();
   }
@@ -200,9 +223,7 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
   const loginAttempts = new Map<string, { count: number; first: number; blockedUntil?: number }>();
   function clientIp(req: Request): string {
     return (
-      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-      req.headers.get("x-real-ip")?.trim() ||
-      "127.0.0.1"
+      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip")?.trim() || "127.0.0.1"
     );
   }
   function isLoginAllowed(ip: string): boolean {
@@ -268,7 +289,29 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
     settings = loadSettings();
   }
 
-  function buildDeps(request: Request): ChatDeps {
+  // global rate limiter: per-IP for /v1/*  (Step 5)
+  const globalLimiter = (() => {
+    const parsed = parseRateLimit(process.env.TROY_RATE_LIMIT, "60/60s");
+    if (!parsed) return null;
+    try {
+      return new FixedWindowLimiter(parsed.max, parsed.windowMs);
+    } catch {
+      return null;
+    }
+  })();
+  const modelLimiter = (() => {
+    const raw = process.env.TROY_MODEL_RATE_LIMIT;
+    if (!raw) return null;
+    const parsed = parseRateLimit(raw, "");
+    if (!parsed) return null;
+    try {
+      return new FixedWindowLimiter(parsed.max, parsed.windowMs);
+    } catch {
+      return null;
+    }
+  })();
+
+  function buildDeps(request: Request, requestId?: string): ChatDeps {
     return {
       store,
       cooldowns,
@@ -277,6 +320,7 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
       cavemanLevel: settings.caveman_level,
       ponytailLevel: settings.ponytail_level,
       signal: request.signal,
+      requestId: requestId ?? "",
       onLog: (row) => store.logRequest(row),
       onTrace: traceEnabled ? trace : undefined,
     };
@@ -284,20 +328,43 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
 
   function proxyRequest(
     handle: (body: Record<string, unknown>, deps: ChatDeps) => Promise<Response>,
-    invalidBody: () => Response,
+    invalidBody: (requestId: string) => Response,
   ) {
-    return async (request: Request, server: { timeout: (req: Request, ms: number) => void }): Promise<Response> => {
+    return async (
+      request: Request,
+      server: { timeout: (req: Request, ms: number) => void },
+      requestId: string,
+    ): Promise<Response> => {
       const body = await readBody(request);
-      if (!body) return invalidBody();
-      const res = await handle(body as Record<string, unknown>, buildDeps(request));
+      if (!body) return invalidBody(requestId);
+      if (modelLimiter && typeof (body as Record<string, unknown>).model === "string") {
+        const model = String((body as Record<string, unknown>).model);
+        const { allowed, retryAfterMs } = modelLimiter.take(model);
+        if (!allowed) {
+          const retryAfterSec = Math.max(1, Math.ceil(retryAfterMs / 1000));
+          return json({ error: { message: "rate limit exceeded", type: "server_error", code: "rate_limited" } }, 429, {
+            "retry-after": String(retryAfterSec),
+            "x-request-id": requestId,
+          });
+        }
+      }
+      const res = await handle(body as Record<string, unknown>, buildDeps(request, requestId));
       if (res.body) server.timeout(request, 0);
+      try {
+        res.headers.set("x-request-id", requestId);
+      } catch {}
       return res;
     };
   }
 
-  const openaiInvalidBody = () => json({ error: { message: "Invalid JSON body", type: "invalid_request_error" } }, 400);
-  const anthropicInvalidBody = () =>
-    json({ type: "error", error: { type: "invalid_request_error", message: "Invalid JSON body" } }, 400);
+  const openaiInvalidBody = (requestId: string) =>
+    json({ error: { message: "Invalid JSON body", type: "invalid_request_error", code: "bad_request" } }, 400, {
+      "x-request-id": requestId,
+    });
+  const anthropicInvalidBody = (requestId: string) =>
+    json({ type: "error", error: { type: "invalid_request_error", message: "Invalid JSON body" } }, 400, {
+      "x-request-id": requestId,
+    });
 
   const handleChatRequest = proxyRequest(handleChat, openaiInvalidBody);
   const handleMessagesRequest = proxyRequest(handleMessages, anthropicInvalidBody);
@@ -307,7 +374,13 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
   let gcTimer: ReturnType<typeof setInterval> | null = null;
   if (enableBackgroundTasks) {
     gcTimer = setInterval(() => {
-      if (Date.now() - lastActivity > 30_000) Bun.gc(true);
+      try {
+        if (Date.now() - lastActivity > 30_000) Bun.gc(true);
+      } catch (err) {
+        try {
+          console.error("[troy] gc panic", err instanceof Error ? (err.stack ?? err.message) : String(err));
+        } catch {}
+      }
     }, 60_000);
     gcTimer.unref?.();
   }
@@ -327,216 +400,423 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
   const server: Server<undefined> = Bun.serve({
     port,
     routes: staticRoutes as never,
-    fetch(request): Response | Promise<Response> {
-      lastActivity = Date.now();
-      const url = new URL(request.url);
-      const path = url.pathname;
-
-      if (request.method === "OPTIONS") return cors(request, url);
-
-      if ((path === "/healthz" || path === "/api/healthz") && request.method === "GET") {
-        return json({ ok: true, ts: new Date().toISOString() });
+    async fetch(request): Promise<Response> {
+      const start = Date.now();
+      let requestId: string;
+      try {
+        const incoming = request.headers.get("x-request-id")?.trim();
+        requestId = incoming || crypto.randomUUID();
+        if (!requestId) throw new Error("empty");
+      } catch {
+        requestId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
       }
-
-      // ---- dashboard password gate ----
-      if (path === "/api/session" && request.method === "GET") {
-        return json({ authed: authed(request), defaultPass: !dashPass });
-      }
-      if (path === "/api/login" && request.method === "POST") {
-        const ip = clientIp(request);
-        if (!isLoginAllowed(ip)) {
-          return json({ error: "too many login attempts, try again in 60s" }, 429, {
-            "retry-after": "60",
-          });
+      const withId = (res: Response): Response => {
+        try {
+          const h = new Headers(res.headers);
+          h.set("x-request-id", requestId);
+          return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h });
+        } catch {
+          return res;
         }
-        return readBody(request).then(async (b) => {
+      };
+      const logStructured = (status: number, error?: string) => {
+        const latency = Date.now() - start;
+        if (traceEnabled || status >= 400) {
+          try {
+            const url = new URL(request.url);
+            console.log(
+              JSON.stringify({
+                tag: "[GIN]",
+                requestId,
+                status,
+                latency,
+                ip: clientIp(request),
+                method: request.method,
+                path: url.pathname,
+                ...(error ? { error } : {}),
+              }),
+            );
+          } catch {
+            /* logging must never throw */
+          }
+        }
+      };
+      // early body limit check without reading (Step 6)
+      const clen = Number(request.headers.get("content-length") ?? 0);
+      const isProxy = request.url.includes("/v1/");
+      const limit = isProxy ? BODY_LIMIT_PROXY : BODY_LIMIT_API;
+      if (clen > limit) {
+        const res = json(
+          {
+            error: {
+              message: `body too large — limit ${limit} bytes`,
+              type: "invalid_request_error",
+              code: "bad_request",
+            },
+          },
+          413,
+          { "x-request-id": requestId },
+        );
+        logStructured(413, "body too large");
+        return res;
+      }
+      try {
+        lastActivity = Date.now();
+        const url = new URL(request.url);
+        const path = url.pathname;
+
+        if (request.method === "OPTIONS") {
+          const res = cors(request, url);
+          const out = withId(res);
+          logStructured(out.status);
+          return out;
+        }
+
+        if ((path === "/healthz" || path === "/api/healthz") && request.method === "GET") {
+          const res = json({ ok: true, ts: new Date().toISOString() }, 200, { "x-request-id": requestId });
+          logStructured(200);
+          return res;
+        }
+
+        // ---- dashboard password gate ----
+        if (path === "/api/session" && request.method === "GET") {
+          const res = json({ authed: authed(request), defaultPass: !dashPass }, 200, { "x-request-id": requestId });
+          logStructured(res.status);
+          return withId(res);
+        }
+        if (path === "/api/login" && request.method === "POST") {
+          const ip = clientIp(request);
+          if (!isLoginAllowed(ip)) {
+            const res = json({ error: "too many login attempts, try again in 60s" }, 429, {
+              "retry-after": "60",
+              "x-request-id": requestId,
+            });
+            logStructured(429, "rate limited");
+            return res;
+          }
+          const b = await readBody(request);
           const body = b as { password?: string } | null;
           if (!(await checkDashboardPassword(body?.password))) {
             noteLoginAttempt(ip, false);
-            return json({ error: "wrong dashboard password" }, 401);
+            const res = json({ error: "wrong dashboard password" }, 401, { "x-request-id": requestId });
+            logStructured(401, "wrong password");
+            return res;
           }
           noteLoginAttempt(ip, true);
           const token = newSessionToken();
           sessions.set(token, Date.now() + SESSION_TTL_MS);
           const secure = url.protocol === "https:";
-          return new Response(JSON.stringify({ ok: true }), {
+          const res = new Response(JSON.stringify({ ok: true }), {
             status: 200,
             headers: {
               "content-type": "application/json",
               "access-control-allow-origin": allowedOrigin(request, url),
               "set-cookie": setSessionCookie(token, secure),
+              "x-request-id": requestId,
             },
           });
-        });
-      }
-      if (path === "/api/logout" && request.method === "POST") {
-        const token = readCookies(request)[SESSION_COOKIE];
-        if (token) sessions.delete(token);
-        return new Response(JSON.stringify({ ok: true }), {
-          headers: {
-            "content-type": "application/json",
-            "access-control-allow-origin": allowedOrigin(request, url),
-            "set-cookie": `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`,
-          },
-        });
-      }
-      if (path.startsWith("/api/") && !authed(request)) {
-        return json({ error: "login required" }, 401);
-      }
-
-      // troy's own api key — every /v1 request must carry it while auth is on
-      if (isV1Path(path, request.method) && apiAuth.on === 1) {
-        const given = extractApiKey(request);
-        if (!given || !safeEqual(given, apiAuth.key)) {
-          return json(
-            {
-              error: {
-                message: "missing or invalid troy api key — send Authorization: Bearer <key> or x-api-key",
-                type: "invalid_request_error",
-                code: "invalid_api_key",
-              },
+          logStructured(200);
+          return res;
+        }
+        if (path === "/api/logout" && request.method === "POST") {
+          const token = readCookies(request)[SESSION_COOKIE];
+          if (token) sessions.delete(token);
+          const res = new Response(JSON.stringify({ ok: true }), {
+            headers: {
+              "content-type": "application/json",
+              "access-control-allow-origin": allowedOrigin(request, url),
+              "set-cookie": `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`,
+              "x-request-id": requestId,
             },
-            401,
-            { "www-authenticate": "Bearer" },
-          );
+          });
+          logStructured(200);
+          return res;
         }
-      }
-
-      if (path === "/api/install-opencode-plugin" && request.method === "POST") {
-        try {
-          return json(
-            installOpenCodePlugin({
-              baseUrl: url.origin,
-              apiKey: apiAuth.on === 1 ? apiAuth.key : "",
-            }),
-          );
-        } catch (e) {
-          return json({ error: e instanceof Error ? e.message : "install failed" }, 500);
+        if (path.startsWith("/api/") && !authed(request)) {
+          const res = json({ error: "login required" }, 401, { "x-request-id": requestId });
+          logStructured(401, "login required");
+          return res;
         }
-      }
 
-      if (path === "/api/install-dsh-plugin" && request.method === "POST") {
-        try {
-          return json(
-            installDshPlugin({
-              baseUrl: url.origin,
-              apiKey: apiAuth.on === 1 ? apiAuth.key : "",
-            }),
-          );
-        } catch (e) {
-          return json({ error: e instanceof Error ? e.message : "install failed" }, 500);
+        // global per-IP rate limiter for /v1/* (Step 5)
+        if (isV1Path(path, request.method) && globalLimiter) {
+          const ip = clientIp(request);
+          const isLocal = ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
+          const bypass = process.env.TROY_RATE_LIMIT_LOCAL_BYPASS === "1";
+          if (!(isLocal && bypass)) {
+            const { allowed, retryAfterMs } = globalLimiter.take(ip);
+            if (!allowed) {
+              const retryAfterSec = Math.max(1, Math.ceil(retryAfterMs / 1000));
+              const res = json(
+                { error: { message: "rate limit exceeded", type: "server_error", code: "rate_limited" } },
+                429,
+                { "retry-after": String(retryAfterSec), "x-request-id": requestId },
+              );
+              logStructured(429, "rate limited");
+              return res;
+            }
+          }
         }
-      }
 
-      if (path === "/api/clear-dsh-plugin" && request.method === "POST") {
-        try {
-          return json(clearDshPlugin());
-        } catch (e) {
-          return json({ error: e instanceof Error ? e.message : "clear failed" }, 500);
+        // troy's own api key — every /v1 request must carry it while auth is on
+        if (isV1Path(path, request.method) && apiAuth.on === 1) {
+          const given = extractApiKey(request);
+          if (!given || !safeEqual(given, apiAuth.key)) {
+            const res = json(
+              {
+                error: {
+                  message: "missing or invalid troy api key — send Authorization: Bearer <key> or x-api-key",
+                  type: "invalid_request_error",
+                  code: "invalid_api_key",
+                },
+              },
+              401,
+              { "www-authenticate": "Bearer", "x-request-id": requestId },
+            );
+            logStructured(401, "invalid api key");
+            return res;
+          }
         }
-      }
 
-      if (path === "/api/key") {
-        if (request.method === "GET") return json({ key: apiAuth.key, on: apiAuth.on === 1 });
-        if (request.method === "PUT") {
-          return readBody(request).then((b) => {
+        if (path === "/api/install-opencode-plugin" && request.method === "POST") {
+          try {
+            const res = json(
+              installOpenCodePlugin({
+                baseUrl: url.origin,
+                apiKey: apiAuth.on === 1 ? apiAuth.key : "",
+              }),
+              200,
+              { "x-request-id": requestId },
+            );
+            logStructured(200);
+            return res;
+          } catch (e) {
+            const res = json({ error: e instanceof Error ? e.message : "install failed" }, 500, {
+              "x-request-id": requestId,
+            });
+            logStructured(500, e instanceof Error ? e.message : String(e));
+            return res;
+          }
+        }
+
+        if (path === "/api/install-dsh-plugin" && request.method === "POST") {
+          try {
+            const res = json(
+              installDshPlugin({
+                baseUrl: url.origin,
+                apiKey: apiAuth.on === 1 ? apiAuth.key : "",
+              }),
+              200,
+              { "x-request-id": requestId },
+            );
+            logStructured(200);
+            return res;
+          } catch (e) {
+            const res = json({ error: e instanceof Error ? e.message : "install failed" }, 500, {
+              "x-request-id": requestId,
+            });
+            logStructured(500, e instanceof Error ? e.message : String(e));
+            return res;
+          }
+        }
+        if (path === "/api/clear-dsh-plugin" && request.method === "POST") {
+          try {
+            const res = json(clearDshPlugin(), 200, { "x-request-id": requestId });
+            logStructured(200);
+            return res;
+          } catch (e) {
+            const res = json({ error: e instanceof Error ? e.message : "clear failed" }, 500, {
+              "x-request-id": requestId,
+            });
+            logStructured(500, e instanceof Error ? e.message : String(e));
+            return res;
+          }
+        }
+
+        if (path === "/api/install-omp-plugin" && request.method === "POST") {
+          try {
+            const res = json(
+              installOmpPlugin({
+                baseUrl: url.origin,
+                apiKey: apiAuth.on === 1 ? apiAuth.key : "",
+              }),
+              200,
+              { "x-request-id": requestId },
+            );
+            logStructured(200);
+            return res;
+          } catch (e) {
+            const res = json({ error: e instanceof Error ? e.message : "install failed" }, 500, {
+              "x-request-id": requestId,
+            });
+            logStructured(500, e instanceof Error ? e.message : String(e));
+            return res;
+          }
+        }
+
+        if (path === "/api/clear-omp-plugin" && request.method === "POST") {
+          try {
+            const res = json(clearOmpPlugin(), 200, { "x-request-id": requestId });
+            logStructured(200);
+            return res;
+          } catch (e) {
+            const res = json({ error: e instanceof Error ? e.message : "clear failed" }, 500, {
+              "x-request-id": requestId,
+            });
+            logStructured(500, e instanceof Error ? e.message : String(e));
+            return res;
+          }
+        }
+
+        if (path === "/api/key") {
+          if (request.method === "GET") {
+            const res = json({ key: apiAuth.key, on: apiAuth.on === 1 }, 200, { "x-request-id": requestId });
+            logStructured(200);
+            return res;
+          }
+          if (request.method === "PUT") {
+            const b = await readBody(request);
             const body = b as { on?: boolean } | null;
             if (body && typeof body.on === "boolean") {
               apiAuth = { ...apiAuth, on: body.on ? 1 : 0 };
               store.putApiAuth(apiAuth);
             }
-            return json({ key: apiAuth.key, on: apiAuth.on === 1 });
-          });
+            const res = json({ key: apiAuth.key, on: apiAuth.on === 1 }, 200, { "x-request-id": requestId });
+            logStructured(200);
+            return res;
+          }
         }
-      }
-      if (path === "/api/key/rotate" && request.method === "POST") {
-        apiAuth = { ...apiAuth, key: generateApiKey() };
-        store.putApiAuth(apiAuth);
-        return json({ key: apiAuth.key, on: apiAuth.on === 1 });
-      }
+        if (path === "/api/key/rotate" && request.method === "POST") {
+          apiAuth = { ...apiAuth, key: generateApiKey() };
+          store.putApiAuth(apiAuth);
+          const res = json({ key: apiAuth.key, on: apiAuth.on === 1 }, 200, { "x-request-id": requestId });
+          logStructured(200);
+          return res;
+        }
 
-      if (
-        request.method === "POST" &&
-        (path === "/v1/chat/completions" || path === "/v1/messages" || path === "/v1/responses")
-      ) {
-        if (path === "/v1/responses") return handleResponsesRequest(request, server);
-        if (path === "/v1/messages") return handleMessagesRequest(request, server);
-        return handleChatRequest(request, server);
-      }
+        if (
+          request.method === "POST" &&
+          (path === "/v1/chat/completions" || path === "/v1/messages" || path === "/v1/responses")
+        ) {
+          let res: Response;
+          if (path === "/v1/responses") res = await handleResponsesRequest(request, server as never, requestId);
+          else if (path === "/v1/messages") res = await handleMessagesRequest(request, server as never, requestId);
+          else res = await handleChatRequest(request, server as never, requestId);
+          logStructured(res.status);
+          return res;
+        }
 
-      if (request.method === "GET" && (path === "/v1/models" || path.startsWith("/v1/models/"))) {
-        return json({ object: "list", data: modelsList(store) });
-      }
+        if (request.method === "GET" && (path === "/v1/models" || path.startsWith("/v1/models/"))) {
+          const res = json({ object: "list", data: modelsList(store) }, 200, { "x-request-id": requestId });
+          logStructured(200);
+          return res;
+        }
 
-      if (request.method === "GET" && path === "/api/stats/daily") {
-        const days = Math.min(30, Math.max(1, Number(url.searchParams.get("days") ?? 7)));
-        return json(store.statsDaily(days));
-      }
+        if (request.method === "GET" && path === "/api/stats/daily") {
+          const days = Math.min(30, Math.max(1, Number(url.searchParams.get("days") ?? 7)));
+          const res = json(store.statsDaily(days), 200, { "x-request-id": requestId });
+          logStructured(200);
+          return res;
+        }
 
-      if (request.method === "GET" && path === "/api/stats") {
-        return json(stats(store));
-      }
+        if (request.method === "GET" && path === "/api/stats") {
+          const res = json(stats(store), 200, { "x-request-id": requestId });
+          logStructured(200);
+          return res;
+        }
 
-      if (request.method === "GET" && path === "/api/providers") {
-        return json(providerCatalog(store));
-      }
+        if (request.method === "GET" && path === "/api/providers") {
+          const res = json(providerCatalog(store), 200, { "x-request-id": requestId });
+          logStructured(200);
+          return res;
+        }
 
-      if (request.method === "GET" && path === "/api/providers/freebuff/cli-token") {
-        return json({ token: discoverFreebuffToken() });
-      }
+        if (request.method === "GET" && path === "/api/providers/freebuff/cli-token") {
+          const res = json({ token: discoverFreebuffToken() }, 200, { "x-request-id": requestId });
+          logStructured(200);
+          return res;
+        }
 
-      if (request.method === "GET" && path === "/api/providers/freebuff/sessions") {
-        return json({ sessions: getFreebuffSessions() });
-      }
+        if (request.method === "GET" && path === "/api/providers/freebuff/sessions") {
+          const res = json({ sessions: getFreebuffSessions() }, 200, { "x-request-id": requestId });
+          logStructured(200);
+          return res;
+        }
 
-      if ((request.method === "POST" || request.method === "DELETE") && path === "/api/providers/freebuff/pause") {
-        return readBody(request).then(async (b) => {
+        if ((request.method === "POST" || request.method === "DELETE") && path === "/api/providers/freebuff/pause") {
+          const b = await readBody(request);
           const body = (b as { connId?: string; model?: string } | null) ?? {};
           const qConn = url.searchParams.get("connId") ?? undefined;
           const qModel = url.searchParams.get("model") ?? undefined;
           const connId = body.connId ?? qConn;
           const model = body.model ?? qModel;
           const paused = await pauseFreebuff(connId, model);
-          return json({ paused });
-        });
-      }
-      // legacy: DELETE session directly
-      if (request.method === "DELETE" && path === "/api/providers/freebuff/session") {
-        return readBody(request).then(async (b) => {
+          const res = json({ paused }, 200, { "x-request-id": requestId });
+          logStructured(200);
+          return res;
+        }
+        // legacy: DELETE session directly
+        if (request.method === "DELETE" && path === "/api/providers/freebuff/session") {
+          const b = await readBody(request);
           const body = (b as { connId?: string; model?: string } | null) ?? {};
           const paused = await pauseFreebuff(body.connId, body.model);
-          return json({ paused });
-        });
-      }
+          const res = json({ paused }, 200, { "x-request-id": requestId });
+          logStructured(200);
+          return res;
+        }
 
-      if (request.method === "GET" && path.startsWith("/api/providers/") && path.endsWith("/models")) {
-        const id = decodeURIComponent(path.slice("/api/providers/".length, -"/models".length));
-        const def = getProvider(id);
-        if (!def) return json({ error: "unknown provider" }, 404);
-        const conn = store.listConnections(id).find((c) => c.is_active === 1) ?? null;
-        const headers = conn ? authHeaders(def, conn) : {};
-        const base = conn ? buildBaseUrl(def, conn) : def.baseUrl;
-        if (def.staticModels) {
-          return json({
-            url: "static",
-            models: def.staticModels.map((mid) => ({ id: mid, name: mid, thinking: enrich(mid).reasoning })),
-          });
-        }
-        const modelsUrl =
-          def.modelsUrl ??
-          (base.endsWith("/chat/completions") ? base.replace(/\/chat\/completions$/, "/models") : `${base}/models`);
-        if (!conn && def.auth !== "none") {
-          return json({ error: "no key", url: modelsUrl, models: [] }, 502);
-        }
-        try {
-          assertPublicUrl(modelsUrl);
-        } catch (e) {
-          return json({ error: e instanceof Error ? e.message : "blocked private address", url: modelsUrl, models: [] }, 400);
-        }
-        return fetch(modelsUrl, { headers, signal: AbortSignal.timeout(15000), redirect: "manual" })
-          .then(async (res) => {
-            if (!res.ok) {
-              const text = await res.text().catch(() => "");
+        if (request.method === "GET" && path.startsWith("/api/providers/") && path.endsWith("/models")) {
+          const id = decodeURIComponent(path.slice("/api/providers/".length, -"/models".length));
+          const def = getProvider(id);
+          if (!def) {
+            const res = json({ error: "unknown provider" }, 404, { "x-request-id": requestId });
+            logStructured(404, "unknown provider");
+            return res;
+          }
+          const conn = store.listConnections(id).find((c) => c.is_active === 1) ?? null;
+          const headers = conn ? authHeaders(def, conn) : {};
+          const base = conn ? buildBaseUrl(def, conn) : def.baseUrl;
+          if (def.staticModels) {
+            const res = json(
+              {
+                url: "static",
+                models: def.staticModels.map((mid) => ({ id: mid, name: mid, thinking: enrich(mid).reasoning })),
+              },
+              200,
+              { "x-request-id": requestId },
+            );
+            logStructured(200);
+            return res;
+          }
+          const modelsUrl =
+            def.modelsUrl ??
+            (base.endsWith("/chat/completions") ? base.replace(/\/chat\/completions$/, "/models") : `${base}/models`);
+          if (!conn && def.auth !== "none") {
+            const res = json({ error: "no key", url: modelsUrl, models: [] }, 502, { "x-request-id": requestId });
+            logStructured(502, "no key");
+            return res;
+          }
+          try {
+            assertPublicUrl(modelsUrl);
+          } catch (e) {
+            const res = json(
+              { error: e instanceof Error ? e.message : "blocked private address", url: modelsUrl, models: [] },
+              400,
+              {
+                "x-request-id": requestId,
+              },
+            );
+            logStructured(400, "blocked private address");
+            return res;
+          }
+          try {
+            const upstreamRes = await fetch(modelsUrl, {
+              headers,
+              signal: AbortSignal.timeout(15000),
+              redirect: "manual",
+            });
+            if (!upstreamRes.ok) {
+              const text = await upstreamRes.text().catch(() => "");
               let detail: string | undefined;
               try {
                 const j = JSON.parse(text) as { error?: { message?: string } };
@@ -545,141 +825,241 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
               } catch {
                 /* non-JSON upstream body */
               }
-              return json({ error: `upstream ${res.status}`, detail, url: modelsUrl, models: [] }, 502);
+              const res = json({ error: `upstream ${upstreamRes.status}`, detail, url: modelsUrl, models: [] }, 502, {
+                "x-request-id": requestId,
+              });
+              logStructured(502, `upstream ${upstreamRes.status}`);
+              return res;
             }
-            const data = (await res.json()) as { data?: { id: string; name?: string }[] };
-            return json({
-              url: modelsUrl,
-              models: (data.data ?? []).map((m) => ({
-                id: m.id,
-                name: m.name ?? m.id,
-                thinking: enrich(m.id).reasoning,
-              })),
+            const data = (await upstreamRes.json()) as { data?: { id: string; name?: string }[] };
+            const res = json(
+              {
+                url: modelsUrl,
+                models: (data.data ?? []).map((m) => ({
+                  id: m.id,
+                  name: m.name ?? m.id,
+                  thinking: enrich(m.id).reasoning,
+                })),
+              },
+              200,
+              { "x-request-id": requestId },
+            );
+            logStructured(200);
+            return res;
+          } catch (e: unknown) {
+            const res = json({ error: e instanceof Error ? e.message : String(e), url: modelsUrl, models: [] }, 502, {
+              "x-request-id": requestId,
             });
-          })
-          .catch((e: unknown) =>
-            json({ error: e instanceof Error ? e.message : String(e), url: modelsUrl, models: [] }, 502),
-          );
-      }
-
-      if (path === "/api/models") {
-        if (request.method === "GET") {
-          return json(store.listModels().map((m) => ({ ...m, thinking: enrich(m.spec).reasoning })));
+            logStructured(502, e instanceof Error ? e.message : String(e));
+            return res;
+          }
         }
-        if (request.method === "POST") {
-          return readBody(request).then((b) => {
+
+        if (path === "/api/models") {
+          if (request.method === "GET") {
+            const res = json(
+              store.listModels().map((m) => ({ ...m, thinking: enrich(m.spec).reasoning })),
+              200,
+              {
+                "x-request-id": requestId,
+              },
+            );
+            logStructured(200);
+            return res;
+          }
+          if (request.method === "POST") {
+            const b = await readBody(request);
             const body = b as { provider?: string; model?: string } | null;
             const provider = body?.provider ?? "";
             const model = body?.model?.trim() ?? "";
-            if (!getProvider(provider)) return json({ error: `unknown provider: ${provider}` }, 400);
-            if (!model) return json({ error: "model id required" }, 400);
+            if (!getProvider(provider)) {
+              const res = json({ error: `unknown provider: ${provider}` }, 400, { "x-request-id": requestId });
+              logStructured(400, "unknown provider");
+              return res;
+            }
+            if (!model) {
+              const res = json({ error: "model id required" }, 400, { "x-request-id": requestId });
+              logStructured(400, "model id required");
+              return res;
+            }
             const m = store.putModel(`${provider}/${model}`);
-            return json({ ...m, thinking: enrich(m.spec).reasoning });
-          });
+            const res = json({ ...m, thinking: enrich(m.spec).reasoning }, 200, { "x-request-id": requestId });
+            logStructured(200);
+            return res;
+          }
         }
-      }
-      if (path.startsWith("/api/models/") && request.method === "DELETE") {
-        store.deleteModel(decodeURIComponent(path.slice("/api/models/".length)));
-        return json({ ok: true });
-      }
+        if (path.startsWith("/api/models/") && request.method === "DELETE") {
+          store.deleteModel(decodeURIComponent(path.slice("/api/models/".length)));
+          const res = json({ ok: true }, 200, { "x-request-id": requestId });
+          logStructured(200);
+          return res;
+        }
 
-      if (path === "/api/modelsdev/status" && request.method === "GET") {
-        return json(enrichmentStatus());
-      }
+        if (path === "/api/modelsdev/status" && request.method === "GET") {
+          const res = json(enrichmentStatus(), 200, { "x-request-id": requestId });
+          logStructured(200);
+          return res;
+        }
 
-      if (path === "/api/settings") {
-        if (request.method === "GET") return json(settings);
-        if (request.method === "PUT") {
-          return readBody(request).then((b) => {
-            if (!b) return json({ error: "bad body" }, 400);
+        if (path === "/api/settings") {
+          if (request.method === "GET") {
+            const res = json(settings, 200, { "x-request-id": requestId });
+            logStructured(200);
+            return res;
+          }
+          if (request.method === "PUT") {
+            const b = await readBody(request);
+            if (!b) {
+              const res = json({ error: "bad body" }, 400, { "x-request-id": requestId });
+              logStructured(400, "bad body");
+              return res;
+            }
             store.putSettings(b as never);
             refreshSettings();
-            return json(settings);
-          });
+            const res = json(settings, 200, { "x-request-id": requestId });
+            logStructured(200);
+            return res;
+          }
         }
-      }
 
-      if (path === "/api/password" && request.method === "POST") {
-        return readBody(request).then(async (b) => {
+        if (path === "/api/password" && request.method === "POST") {
+          const b = await readBody(request);
           const body = b as { current?: string; next?: string } | null;
           if (!(await checkDashboardPassword(body?.current))) {
-            return json({ error: "current password is wrong" }, 403);
+            const res = json({ error: "current password is wrong" }, 403, { "x-request-id": requestId });
+            logStructured(403, "wrong password");
+            return res;
           }
           const next = body?.next;
           if (typeof next !== "string" || next.length < 4) {
-            return json({ error: "new password must be at least 4 characters" }, 400);
+            const res = json({ error: "new password must be at least 4 characters" }, 400, {
+              "x-request-id": requestId,
+            });
+            logStructured(400, "new password too short");
+            return res;
           }
           dashPass = { salt: "", hash: await hashPassword(next) };
           store.putDashPass(dashPass);
           // invalidate all dashboard sessions on password change
           sessions.clear();
-          return json({ ok: true });
-        });
-      }
+          const res = json({ ok: true }, 200, { "x-request-id": requestId });
+          logStructured(200);
+          return res;
+        }
 
-      if (path === "/api/combos") {
-        if (request.method === "GET") return json(store.listCombos());
-        if (request.method === "POST") {
-          return readBody(request).then((b) => {
+        if (path === "/api/combos") {
+          if (request.method === "GET") {
+            const res = json(store.listCombos(), 200, { "x-request-id": requestId });
+            logStructured(200);
+            return res;
+          }
+          if (request.method === "POST") {
+            const b = await readBody(request);
             const body = b as { name?: string; models?: unknown[]; strategy?: string } | null;
-            if (!body?.name || !Array.isArray(body.models)) return json({ error: "need name + models[]" }, 400);
+            if (!body?.name || !Array.isArray(body.models)) {
+              const res = json({ error: "need name + models[]" }, 400, { "x-request-id": requestId });
+              logStructured(400, "need name + models");
+              return res;
+            }
             for (const m of body.models) {
               if (typeof m !== "string" || !m.includes("/")) {
-                return json({ error: `combo model must be 'provider/model', got: ${m}` }, 400);
+                const res = json({ error: `combo model must be 'provider/model', got: ${m}` }, 400, {
+                  "x-request-id": requestId,
+                });
+                logStructured(400, "combo model format");
+                return res;
               }
               const [prov] = m.split("/");
               if (!getProvider(prov)) {
-                return json({ error: `unknown provider: ${prov}` }, 400);
+                const res = json({ error: `unknown provider: ${prov}` }, 400, { "x-request-id": requestId });
+                logStructured(400, "unknown provider");
+                return res;
               }
             }
             const strategy = body.strategy && COMBO_STRATEGIES.has(body.strategy) ? body.strategy : "fallback";
-            return json(store.putCombo(body.name, body.models as string[], strategy));
-          });
+            const res = json(store.putCombo(body.name, body.models as string[], strategy), 200, {
+              "x-request-id": requestId,
+            });
+            logStructured(200);
+            return res;
+          }
         }
-      }
-      if (path.startsWith("/api/combos/") && request.method === "DELETE") {
-        store.deleteCombo(decodeURIComponent(path.slice("/api/combos/".length)));
-        return json({ ok: true });
-      }
+        if (path.startsWith("/api/combos/") && request.method === "DELETE") {
+          store.deleteCombo(decodeURIComponent(path.slice("/api/combos/".length)));
+          const res = json({ ok: true }, 200, { "x-request-id": requestId });
+          logStructured(200);
+          return res;
+        }
 
-      if (path === "/api/custom-providers") {
-        if (request.method === "GET") return json(store.listCustomProviders());
-        if (request.method === "POST") {
-          return readBody(request).then((b) => {
+        if (path === "/api/custom-providers") {
+          if (request.method === "GET") {
+            const res = json(store.listCustomProviders(), 200, { "x-request-id": requestId });
+            logStructured(200);
+            return res;
+          }
+          if (request.method === "POST") {
+            const b = await readBody(request);
             const body = b as { id?: string; name?: string; baseUrl?: string; auth?: string } | null;
             const id = body?.id?.trim().toLowerCase() ?? "";
             if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(id)) {
-              return json({ error: "id must be 1-32 chars: lowercase letters, digits, dashes" }, 400);
+              const res = json({ error: "id must be 1-32 chars: lowercase letters, digits, dashes" }, 400, {
+                "x-request-id": requestId,
+              });
+              logStructured(400, "bad custom id");
+              return res;
             }
-            if (getProvider(id)) return json({ error: `provider '${id}' already exists` }, 400);
+            if (getProvider(id)) {
+              const res = json({ error: `provider '${id}' already exists` }, 400, { "x-request-id": requestId });
+              logStructured(400, "provider exists");
+              return res;
+            }
             const baseUrl = body?.baseUrl?.trim() ?? "";
-            if (!/^https?:\/\//.test(baseUrl)) return json({ error: "baseUrl must start with http(s)://" }, 400);
+            if (!/^https?:\/\//.test(baseUrl)) {
+              const res = json({ error: "baseUrl must start with http(s)://" }, 400, { "x-request-id": requestId });
+              logStructured(400, "bad baseUrl");
+              return res;
+            }
             try {
               assertPublicUrl(baseUrl);
             } catch (e) {
-              return json({ error: e instanceof Error ? e.message : "blocked private address" }, 400);
+              const res = json({ error: e instanceof Error ? e.message : "blocked private address" }, 400, {
+                "x-request-id": requestId,
+              });
+              logStructured(400, "blocked private address");
+              return res;
             }
             const auth = body?.auth === "none" || body?.auth === "raw" ? body.auth : "bearer";
             const p: Provider = { id, aliases: [id], name: body?.name?.trim() || undefined, baseUrl, auth };
             store.putCustomProvider(id, p);
             registerCustomProvider(p);
-            return json(p);
-          });
+            const res = json(p, 200, { "x-request-id": requestId });
+            logStructured(200);
+            return res;
+          }
         }
-      }
-      if (path.startsWith("/api/custom-providers/") && request.method === "DELETE") {
-        const id = decodeURIComponent(path.slice("/api/custom-providers/".length));
-        if (!customProviderIds().includes(id)) return json({ error: "unknown custom provider" }, 404);
-        store.deleteCustomProvider(id);
-        unregisterCustomProvider(id);
-        for (const c of store.listConnections(id)) store.deleteConnection(c.id);
-        return json({ ok: true });
-      }
+        if (path.startsWith("/api/custom-providers/") && request.method === "DELETE") {
+          const id = decodeURIComponent(path.slice("/api/custom-providers/".length));
+          if (!customProviderIds().includes(id)) {
+            const res = json({ error: "unknown custom provider" }, 404, { "x-request-id": requestId });
+            logStructured(404, "unknown custom provider");
+            return res;
+          }
+          store.deleteCustomProvider(id);
+          unregisterCustomProvider(id);
+          for (const c of store.listConnections(id)) store.deleteConnection(c.id);
+          const res = json({ ok: true }, 200, { "x-request-id": requestId });
+          logStructured(200);
+          return res;
+        }
 
-      if (path === "/api/connections") {
-        if (request.method === "GET") return json(store.listConnections());
-        if (request.method === "POST") {
-          return readBody(request).then((b) => {
+        if (path === "/api/connections") {
+          if (request.method === "GET") {
+            const res = json(store.listConnections(), 200, { "x-request-id": requestId });
+            logStructured(200);
+            return res;
+          }
+          if (request.method === "POST") {
+            const b = await readBody(request);
             const body = b as {
               provider?: string;
               api_key?: string;
@@ -688,17 +1068,33 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
               extra?: string;
               priority?: number;
             } | null;
-            if (!body?.provider || !body.api_key) return json({ error: "need provider + api_key" }, 400);
-            if (!getProvider(body.provider)) return json({ error: `unknown provider: ${body.provider}` }, 400);
+            if (!body?.provider || !body.api_key) {
+              const res = json({ error: "need provider + api_key" }, 400, { "x-request-id": requestId });
+              logStructured(400, "need provider + api_key");
+              return res;
+            }
+            if (!getProvider(body.provider)) {
+              const res = json({ error: `unknown provider: ${body.provider}` }, 400, { "x-request-id": requestId });
+              logStructured(400, "unknown provider");
+              return res;
+            }
             if (body.base_url) {
-              if (!/^https?:\/\//.test(body.base_url)) return json({ error: "base_url must start with http(s)://" }, 400);
+              if (!/^https?:\/\//.test(body.base_url)) {
+                const res = json({ error: "base_url must start with http(s)://" }, 400, { "x-request-id": requestId });
+                logStructured(400, "bad base_url");
+                return res;
+              }
               try {
                 assertPublicUrl(body.base_url);
               } catch (e) {
-                return json({ error: e instanceof Error ? e.message : "blocked private address" }, 400);
+                const res = json({ error: e instanceof Error ? e.message : "blocked private address" }, 400, {
+                  "x-request-id": requestId,
+                });
+                logStructured(400, "blocked private address");
+                return res;
               }
             }
-            return json(
+            const res = json(
               store.addConnection({
                 provider: body.provider,
                 api_key: body.api_key,
@@ -707,40 +1103,76 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
                 extra: body.extra,
                 priority: body.priority,
               }),
+              200,
+              { "x-request-id": requestId },
             );
-          });
+            logStructured(200);
+            return res;
+          }
         }
-      }
-      if (path.startsWith("/api/connections/")) {
-        const id = path.slice("/api/connections/".length);
-        if (request.method === "PUT") {
-          return readBody(request).then((b) => {
-            if (!b) return json({ error: "bad body" }, 400);
+        if (path.startsWith("/api/connections/")) {
+          const id = path.slice("/api/connections/".length);
+          if (request.method === "PUT") {
+            const b = await readBody(request);
+            if (!b) {
+              const res = json({ error: "bad body" }, 400, { "x-request-id": requestId });
+              logStructured(400, "bad body");
+              return res;
+            }
             const upd = b as { base_url?: string } | null;
             if (upd?.base_url) {
-              if (!/^https?:\/\//.test(upd.base_url)) return json({ error: "base_url must start with http(s)://" }, 400);
+              if (!/^https?:\/\//.test(upd.base_url)) {
+                const res = json({ error: "base_url must start with http(s)://" }, 400, { "x-request-id": requestId });
+                logStructured(400, "bad base_url");
+                return res;
+              }
               try {
                 assertPublicUrl(upd.base_url);
               } catch (e) {
-                return json({ error: e instanceof Error ? e.message : "blocked private address" }, 400);
+                const res = json({ error: e instanceof Error ? e.message : "blocked private address" }, 400, {
+                  "x-request-id": requestId,
+                });
+                logStructured(400, "blocked private address");
+                return res;
               }
             }
             const row = store.updateConnection(id, b as never);
-            return json(row ?? { error: "unknown connection" }, row ? 200 : 404);
-          });
+            const res = json(row ?? { error: "unknown connection" }, row ? 200 : 404, { "x-request-id": requestId });
+            logStructured(res.status, row ? undefined : "unknown connection");
+            return res;
+          }
+          if (request.method === "DELETE") {
+            store.deleteConnection(id);
+            const res = json({ ok: true }, 200, { "x-request-id": requestId });
+            logStructured(200);
+            return res;
+          }
         }
-        if (request.method === "DELETE") {
-          store.deleteConnection(id);
-          return json({ ok: true });
+
+        if (path === "/api/logs") {
+          const limit = Math.min(500, Number(url.searchParams.get("limit") ?? 50));
+          const res = json(store.listLogs(limit), 200, { "x-request-id": requestId });
+          logStructured(200);
+          return res;
         }
-      }
 
-      if (path === "/api/logs") {
-        const limit = Math.min(500, Number(url.searchParams.get("limit") ?? 50));
-        return json(store.listLogs(limit));
+        const res = json({ error: "not found" }, 404, { "x-request-id": requestId });
+        logStructured(404, "not found");
+        return res;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const stack = err instanceof Error ? err.stack : undefined;
+        try {
+          console.error(`[panic] requestId=${requestId} ${msg}`, stack ?? "");
+        } catch {}
+        const res = json(
+          { error: { message: `panic: ${msg.slice(0, 200)}`, type: "troy_panic", code: "internal" } },
+          500,
+          { "x-request-id": requestId },
+        );
+        logStructured(500, msg);
+        return res;
       }
-
-      return json({ error: "not found" }, 404);
     },
   });
 
@@ -751,5 +1183,22 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
     url: server.url.toString(),
     getApiAuth: () => apiAuth,
     getDashPass: () => dashPass,
+    shutdown: () => {
+      try {
+        clearInterval(sessionSweep as unknown as NodeJS.Timeout);
+      } catch {}
+      try {
+        clearInterval(gcTimer as unknown as NodeJS.Timeout);
+      } catch {}
+      try {
+        globalLimiter?.stop();
+      } catch {}
+      try {
+        modelLimiter?.stop();
+      } catch {}
+      try {
+        store.stopLogFlush();
+      } catch {}
+    },
   };
 }

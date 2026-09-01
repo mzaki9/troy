@@ -129,7 +129,10 @@ function Overview({ onOpen }: { onOpen: (id: string) => void }) {
         </CardHeader>
         {providers.error ? (
           <div className="mx-6 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
-            Failed to load providers: {providers.error.message} — <button type="button" onClick={() => providers.refetch()} className="underline">retry</button>
+            Failed to load providers: {providers.error.message} —{" "}
+            <button type="button" onClick={() => providers.refetch()} className="underline">
+              retry
+            </button>
           </div>
         ) : null}
         <CardContent>
@@ -188,7 +191,9 @@ function Overview({ onOpen }: { onOpen: (id: string) => void }) {
               {providers.data.length > 0 && providers.data.every((p) => p.chosen === 0) ? (
                 <div className="mt-4 rounded-md border border-dashed bg-muted/30 px-4 py-3 text-center">
                   <p className="text-xs font-medium">No chosen models yet</p>
-                  <p className="mt-1 text-[11px] text-muted-foreground">Pick a model inside a provider to make it routable — the proxy only serves chosen specs and combos.</p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Pick a model inside a provider to make it routable — the proxy only serves chosen specs and combos.
+                  </p>
                 </div>
               ) : null}
             </>

@@ -75,8 +75,11 @@ curl -s http://localhost:31337/healthz
 | DELETE | `/api/combos/<name>` | remove combo |
 | GET / PUT | `/api/settings` | rtk_on, caveman_level, ponytail_level, strategy |
 | GET | `/api/modelsdev/status` | enrichment sync state + layer hit counters |
-| POST | `/api/install-opencode-plugin` | write the OpenCode plugin |
-
+| POST | `/api/install-opencode-plugin` | write the OpenCode plugin (`~/.config/opencode/plugins/troy.ts`) |
+| POST | `/api/install-dsh-plugin` | write the DeepSeek Harness plugin (`~/.dsh/plugins/troy-dsh.ts`) |
+| POST | `/api/install-omp-plugin` | write the Oh My Pi extension (`~/.omp/agent/extensions/troy.ts`) |
+| POST | `/api/clear-omp-plugin` | remove the Oh My Pi extension |
+| POST | `/api/clear-dsh-plugin` | remove the DeepSeek Harness plugin |
 ### Observability
 
 | Method | Path | Purpose |

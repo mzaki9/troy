@@ -370,38 +370,78 @@ function finish(st: StreamState, events: Record<string, unknown>[]) {
 }
 
 export async function handleResponses(body: Record<string, unknown>, deps: ChatDeps): Promise<Response> {
-  const chatBody = toChatBody(body);
-  const res = await handleChat(chatBody, deps);
-  if (!res.ok) return res; // error shape is compatible
-  const streaming = chatBody.stream === true && (res.headers.get("content-type") ?? "").includes("text/event-stream");
-  if (!streaming) {
-    const text = await res.text();
-    try {
-      return new Response(JSON.stringify(toResponses(JSON.parse(text), String(chatBody.model))), {
-        status: 200,
-        headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
-      });
-    } catch {
+  try {
+    const chatBody = toChatBody(body);
+    const res = await handleChat(chatBody, deps);
+    if (!res.ok) {
+      if (deps.requestId) {
+        try {
+          res.headers.set("x-request-id", deps.requestId);
+        } catch {}
+      }
       return res;
     }
+    const streaming = chatBody.stream === true && (res.headers.get("content-type") ?? "").includes("text/event-stream");
+    if (!streaming) {
+      const text = await res.text();
+      try {
+        const headers: Record<string, string> = {
+          "content-type": "application/json",
+          "access-control-allow-origin": "*",
+        };
+        if (deps.requestId) headers["x-request-id"] = deps.requestId;
+        return new Response(JSON.stringify(toResponses(JSON.parse(text), String(chatBody.model))), {
+          status: 200,
+          headers,
+        });
+      } catch {
+        if (deps.requestId) {
+          try {
+            res.headers.set("x-request-id", deps.requestId);
+          } catch {}
+        }
+        return res;
+      }
+    }
+    const st: StreamState = {
+      id: `resp_${uuid()}`,
+      model: String(chatBody.model),
+      output: [],
+      outputText: "",
+      open: null,
+      tools: new Map(),
+      started: false,
+      done: false,
+      usage: null,
+    };
+    const stream = sseTranslate(
+      (ev) => chatChunkToEvents(ev, st),
+      (events) => finish(st, events),
+    );
+    const headers: Record<string, string> = {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      "access-control-allow-origin": "*",
+    };
+    if (deps.requestId) headers["x-request-id"] = deps.requestId;
+    return new Response(res.body!.pipeThrough(stream), {
+      status: 200,
+      headers,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error ? err.stack : undefined;
+    try {
+      console.error(`[panic] handleResponses requestId=${deps.requestId ?? "-"} ${msg}`, stack ?? "");
+    } catch {}
+    const headers: Record<string, string> = { "content-type": "application/json", "access-control-allow-origin": "*" };
+    if (deps.requestId) headers["x-request-id"] = deps.requestId;
+    return new Response(
+      JSON.stringify({ error: { message: `panic: ${msg.slice(0, 200)}`, type: "troy_panic", code: "internal" } }),
+      {
+        status: 500,
+        headers,
+      },
+    );
   }
-  const st: StreamState = {
-    id: `resp_${uuid()}`,
-    model: String(chatBody.model),
-    output: [],
-    outputText: "",
-    open: null,
-    tools: new Map(),
-    started: false,
-    done: false,
-    usage: null,
-  };
-  const stream = sseTranslate(
-    (ev) => chatChunkToEvents(ev, st),
-    (events) => finish(st, events),
-  );
-  return new Response(res.body!.pipeThrough(stream), {
-    status: 200,
-    headers: { "content-type": "text/event-stream", "cache-control": "no-cache", "access-control-allow-origin": "*" },
-  });
 }

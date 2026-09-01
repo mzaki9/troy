@@ -224,6 +224,8 @@ export function ToolsPage() {
   const [pluginMsg, setPluginMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [installingDsh, setInstallingDsh] = useState(false);
   const [dshMsg, setDshMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [installingOmp, setInstallingOmp] = useState(false);
+  const [ompMsg, setOmpMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const logs = useApi<LogRow[]>("/api/logs?limit=100", { interval: 10000 });
   const saved = useApi<SavedModel[]>("/api/models", { interval: 3000 });
   const combos = useApi<Combo[]>("/api/combos", { interval: 5000 });
@@ -241,7 +243,7 @@ export function ToolsPage() {
   // if the selected model was deleted (chosen list no longer contains it), reset so snippets fall back
   useEffect(() => {
     if (selectedModel && !validIds.has(selectedModel)) setSelectedModel("");
-  }, [selectedModel, chosen.length, comboList.length]);
+  }, [selectedModel, validIds.has]);
 
   // refresh immediately when the tab regains focus or page becomes visible (covers cross-page delete)
   useEffect(() => {
@@ -292,7 +294,6 @@ export function ToolsPage() {
       setInstalling(false);
     }
   };
-
   const installDsh = async () => {
     setInstallingDsh(true);
     setDshMsg(null);
@@ -306,6 +307,22 @@ export function ToolsPage() {
       setDshMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
     } finally {
       setInstallingDsh(false);
+    }
+  };
+
+  const installOmp = async () => {
+    setInstallingOmp(true);
+    setOmpMsg(null);
+    try {
+      const res = await api<{ extensionPath: string }>("/api/install-omp-plugin", { method: "POST" });
+      setOmpMsg({
+        ok: true,
+        text: `installed → ${res.extensionPath} — restart omp, then pick any troy/… model (list stays live)`,
+      });
+    } catch (e) {
+      setOmpMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setInstallingOmp(false);
     }
   };
 
@@ -388,6 +405,23 @@ export function ToolsPage() {
               {installingDsh ? "installing…" : "install"}
             </Button>
           </div>
+          <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2">
+            <PlugZap className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="text-[11px] font-medium">Oh My Pi (omp) extension</span>
+            <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
+              live model list in omp — installs into ~/.omp/agent/extensions, restart omp
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-6 gap-1 px-2 text-[11px]"
+              onClick={installOmp}
+              disabled={installingOmp}
+            >
+              <PlugZap className="size-3" />
+              {installingOmp ? "installing…" : "install"}
+            </Button>
+          </div>
           {pluginMsg ? (
             <p
               className={cn(
@@ -406,6 +440,16 @@ export function ToolsPage() {
               )}
             >
               {dshMsg.text}
+            </p>
+          ) : null}
+          {ompMsg ? (
+            <p
+              className={cn(
+                "text-[11px]",
+                ompMsg.ok ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400",
+              )}
+            >
+              {ompMsg.text}
             </p>
           ) : null}
           {chosen.length > 0 ? (
