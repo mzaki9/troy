@@ -295,18 +295,17 @@ function ModelTable({ rows }: { rows?: StatRow[] }) {
   );
 }
 
-function PeriodPills() {
-  const [period, setPeriod] = useState("24h");
+function PeriodPills({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const btnRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [ind, setInd] = useState<{ left: number; width: number } | null>(null);
   const pills = ["24h", "Today", "7D", "30D", "All"];
 
   useEffect(() => {
-    const btn = btnRefs.current[period];
+    const btn = btnRefs.current[value];
     if (!btn) return;
     setInd({ left: btn.offsetLeft, width: btn.offsetWidth });
-  }, [period]);
+  }, [value]);
 
   return (
     <div ref={wrapRef} className="relative inline-flex w-fit rounded-full border bg-card p-1">
@@ -325,10 +324,10 @@ function PeriodPills() {
           ref={(el) => {
             btnRefs.current[p] = el;
           }}
-          onClick={() => setPeriod(p)}
+          onClick={() => onChange(p)}
           className={cn(
             "relative rounded-full px-4 py-1.5 text-xs font-medium transition-colors",
-            period === p ? "text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+            value === p ? "text-primary-foreground" : "text-muted-foreground hover:text-foreground",
           )}
         >
           {p}
@@ -341,14 +340,32 @@ function PeriodPills() {
 // ---- page ----
 
 export function UsagePage() {
+  const [period, setPeriod] = useState("7D");
+  const days = period === "24h" || period === "Today" ? 1 : period === "7D" ? 7 : 30;
   const stats = useApi<StatsData>("/api/stats", { interval: 10000 });
-  const daily = useApi<DailyData>("/api/stats/daily?days=7", { interval: 15000 });
+  const daily = useApi<DailyData>(`/api/stats/daily?days=${days}`, { interval: 15000 });
   const logs = useApi<LogRow[]>("/api/logs", { interval: 5000 });
 
   const t = stats.data?.totals;
   const rate = t?.requests ? (t.ok / t.requests) * 100 : undefined;
 
   return (
+    <>
+      {stats.error ? (
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+          Failed to load stats: {stats.error.message} — <button type="button" onClick={() => stats.refetch()} className="underline">retry</button>
+        </div>
+      ) : null}
+      {daily.error ? (
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+          Failed to load daily chart: {daily.error.message} — <button type="button" onClick={() => daily.refetch()} className="underline">retry</button>
+        </div>
+      ) : null}
+      {logs.error ? (
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+          Failed to load logs: {logs.error.message} — <button type="button" onClick={() => logs.refetch()} className="underline">retry</button>
+        </div>
+      ) : null}
     <Tabs defaultValue="overview">
       <TabsList>
         <TabsTrigger value="overview">Overview</TabsTrigger>
@@ -405,11 +422,29 @@ export function UsagePage() {
           )}
         </div>
 
+        {t && t.requests === 0 ? (
+          <Card className="border-dashed">
+            <CardContent className="flex flex-col items-center gap-3 py-8 text-center">
+              <p className="text-sm font-medium">No traffic yet</p>
+              <p className="max-w-md text-xs text-muted-foreground">
+                Add a provider key and pick a model to start routing. Your first request will appear here.
+              </p>
+              <button
+                type="button"
+                onClick={() => (location.hash = "#providers")}
+                className="rounded-full bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+              >
+                Go to Providers →
+              </button>
+            </CardContent>
+          </Card>
+        ) : null}
+
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
           <Card className="min-h-[380px]">
             <CardHeader className="flex-row items-center justify-between">
               <CardTitle>Requests per day</CardTitle>
-              <Badge variant="secondary">last 7 days · stacked by model</Badge>
+              <Badge variant="secondary">last {days} days · stacked by model</Badge>
             </CardHeader>
             <CardContent>
               <DailyChart data={daily.data} />
@@ -449,7 +484,7 @@ export function UsagePage() {
       </TabsContent>
 
       <TabsContent value="details" className="view-switch space-y-4">
-        <PeriodPills />
+        <PeriodPills value={period} onChange={setPeriod} />
 
         <Card>
           <CardHeader>
@@ -470,5 +505,6 @@ export function UsagePage() {
         </Card>
       </TabsContent>
     </Tabs>
+    </>
   );
 }

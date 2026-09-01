@@ -1,10 +1,10 @@
-import { Check, Copy, Lock, Moon, Sun } from "lucide-react";
+import { Check, Copy, Lock, Menu, Moon, Sun } from "lucide-react";
 import { useState } from "react";
 import { toggleDark, useDark } from "../dark";
 import { PAGES, type PageId } from "./sidebar";
 import { Button } from "./ui/button";
 
-export function Topbar({ page, onLogout }: { page: PageId; onLogout: () => void }) {
+export function Topbar({ page, onLogout, onMenu }: { page: PageId; onLogout: () => void; onMenu?: () => void }) {
   const meta = PAGES.find((p) => p.id === page)!;
   const [copied, setCopied] = useState(false);
   const dark = useDark();
@@ -16,8 +16,13 @@ export function Topbar({ page, onLogout }: { page: PageId; onLogout: () => void 
   };
 
   return (
-    <header className="flex items-center justify-between gap-3 border-b border-border bg-card px-8 py-4">
+    <header className="flex items-center justify-between gap-3 border-b border-border bg-card px-4 py-4 lg:px-8">
       <div className="flex min-w-0 items-center gap-3">
+        {onMenu ? (
+          <Button variant="ghost" size="icon" onClick={onMenu} aria-label="open menu" className="lg:hidden">
+            <Menu className="size-4" />
+          </Button>
+        ) : null}
         <meta.icon className="size-4 shrink-0 text-foreground" />
         <div className="min-w-0">
           <h1 className="text-lg leading-tight font-medium tracking-[0.02em]">{meta.label}</h1>

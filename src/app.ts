@@ -334,6 +334,10 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
 
       if (request.method === "OPTIONS") return cors(request, url);
 
+      if ((path === "/healthz" || path === "/api/healthz") && request.method === "GET") {
+        return json({ ok: true, ts: new Date().toISOString() });
+      }
+
       // ---- dashboard password gate ----
       if (path === "/api/session" && request.method === "GET") {
         return json({ authed: authed(request), defaultPass: !dashPass });

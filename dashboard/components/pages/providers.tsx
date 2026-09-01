@@ -73,18 +73,38 @@ function parseApiError(e: unknown): string {
 
 const GRID = "grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
 
+function hashSel(): string | null {
+  const h = location.hash.slice(1);
+  if (h.startsWith("providers/")) return decodeURIComponent(h.slice("providers/".length));
+  return null;
+}
 export function ProvidersPage() {
-  const [sel, setSel] = useState<string | null>(null);
+  const [sel, setSel] = useState<string | null>(() => hashSel());
+
+  useEffect(() => {
+    const onHash = () => setSel(hashSel());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
+  const open = (id: string) => {
+    location.hash = `providers/${encodeURIComponent(id)}`;
+    setSel(id);
+  };
+  const back = () => {
+    history.pushState(null, "", "#providers");
+    setSel(null);
+  };
 
   if (sel)
     return (
       <div key={sel} className="view-switch">
-        <ProviderDetail id={sel} onBack={() => setSel(null)} />
+        <ProviderDetail id={sel} onBack={back} />
       </div>
     );
   return (
     <div key="overview" className="view-switch">
-      <Overview onOpen={setSel} />
+      <Overview onOpen={open} />
     </div>
   );
 }
@@ -107,6 +127,11 @@ function Overview({ onOpen }: { onOpen: (id: string) => void }) {
             OpenAI-compatible chat-completions catalog — click a provider for its keys and models
           </CardDescription>
         </CardHeader>
+        {providers.error ? (
+          <div className="mx-6 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+            Failed to load providers: {providers.error.message} — <button type="button" onClick={() => providers.refetch()} className="underline">retry</button>
+          </div>
+        ) : null}
         <CardContent>
           {!providers.data ? (
             <div className={GRID}>
@@ -115,50 +140,58 @@ function Overview({ onOpen }: { onOpen: (id: string) => void }) {
               ))}
             </div>
           ) : (
-            <div className={GRID}>
-              {providers.data.map((p) => {
-                // "connected" = actually usable: an active key AND a chosen model
-                const ready = p.connected > 0 && p.chosen > 0;
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => onOpen(p.id)}
-                    title={p.baseUrl}
-                    className={cn(
-                      "flex gap-3 rounded-lg border bg-card px-4 py-3 text-left transition-colors hover:border-black/40 dark:hover:border-white/40 focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/20 focus-visible:outline-none",
-                      ready && "border-aloe",
-                    )}
-                  >
-                    <ProviderIcon id={p.id} className="size-8 rounded-lg" />
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">
-                        {p.name ?? p.id}
-                        {p.custom ? (
-                          <span className="ml-1.5 rounded bg-primary/10 px-1 py-px text-[9px] font-semibold tracking-wide text-primary uppercase">
-                            custom
-                          </span>
-                        ) : null}
-                      </p>
-                      <p
-                        className={cn(
-                          "flex items-center gap-1.5 text-[11px]",
-                          ready && "text-emerald-600 dark:text-emerald-400",
-                        )}
-                      >
-                        <span
+            <>
+              <div className={GRID}>
+                {providers.data.map((p) => {
+                  // "connected" = actually usable: an active key AND a chosen model
+                  const ready = p.connected > 0 && p.chosen > 0;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => onOpen(p.id)}
+                      title={p.baseUrl}
+                      className={cn(
+                        "flex gap-3 rounded-lg border bg-card px-4 py-3 text-left transition-colors hover:border-black/40 dark:hover:border-white/40 focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/20 focus-visible:outline-none",
+                        ready && "border-aloe",
+                      )}
+                    >
+                      <ProviderIcon id={p.id} className="size-8 rounded-lg" />
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">
+                          {p.name ?? p.id}
+                          {p.custom ? (
+                            <span className="ml-1.5 rounded bg-primary/10 px-1 py-px text-[9px] font-semibold tracking-wide text-primary uppercase">
+                              custom
+                            </span>
+                          ) : null}
+                        </p>
+                        <p
                           className={cn(
-                            "size-1.5 shrink-0 rounded-full",
-                            ready ? "bg-emerald-500" : p.connected ? "bg-amber-500" : "bg-muted-foreground/60",
+                            "flex items-center gap-1.5 text-[11px]",
+                            ready && "text-emerald-600 dark:text-emerald-400",
                           )}
-                        />
-                        {ready ? "connected" : p.connected ? "key added — pick a model" : "no key"}
-                      </p>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+                        >
+                          <span
+                            className={cn(
+                              "size-1.5 shrink-0 rounded-full",
+                              ready ? "bg-emerald-500" : p.connected ? "bg-amber-500" : "bg-muted-foreground/60",
+                            )}
+                          />
+                          {ready ? "connected" : p.connected ? "key added — pick a model" : "no key"}
+                        </p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              {providers.data.length > 0 && providers.data.every((p) => p.chosen === 0) ? (
+                <div className="mt-4 rounded-md border border-dashed bg-muted/30 px-4 py-3 text-center">
+                  <p className="text-xs font-medium">No chosen models yet</p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">Pick a model inside a provider to make it routable — the proxy only serves chosen specs and combos.</p>
+                </div>
+              ) : null}
+            </>
           )}
         </CardContent>
       </Card>

@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { Gauge, Layers, Network, Settings2, Terminal } from "lucide-react";
+import { Gauge, Layers, Network, Settings2, Terminal, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "../lib/utils";
 
@@ -13,7 +13,7 @@ export const PAGES: { id: PageId; label: string; desc: string; icon: LucideIcon 
 
 export type PageId = "usage" | "providers" | "combos" | "tools" | "settings";
 
-export function Sidebar({ page, onNavigate }: { page: PageId; onNavigate: (p: PageId) => void }) {
+export function Sidebar({ page, onNavigate, open, onClose }: { page: PageId; onNavigate: (p: PageId) => void; open?: boolean; onClose?: () => void }) {
   const navRef = useRef<HTMLElement | null>(null);
   const btnRefs = useRef<Partial<Record<PageId, HTMLButtonElement | null>>>({});
   const [ind, setInd] = useState<{ top: number; height: number } | null>(null);
@@ -34,15 +34,26 @@ export function Sidebar({ page, onNavigate }: { page: PageId; onNavigate: (p: Pa
   }, [measure]);
 
   return (
-    <aside className="flex w-64 shrink-0 flex-col border-r border-border bg-card">
-      <div className="flex items-center gap-2.5 px-6 pt-6 pb-5">
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary">
-          <img src="/favicon.svg" alt="troy" className="size-5 dark:invert" />
-        </span>
-        <span className="min-w-0">
-          <span className="block text-[15px] leading-tight font-semibold tracking-tight">troy</span>
-          <span className="block text-[10px] tracking-[0.08em] text-muted-foreground uppercase">minimal ai router</span>
-        </span>
+    <aside
+      className={cn(
+        "flex w-64 shrink-0 flex-col border-r border-border bg-card transition-transform duration-200 lg:translate-x-0",
+        "fixed inset-y-0 left-0 z-40 lg:static",
+        open ? "translate-x-0" : "-translate-x-full lg:translate-x-0",
+      )}
+    >
+      <div className="flex items-center justify-between gap-2.5 px-6 pt-6 pb-5">
+        <div className="flex items-center gap-2.5">
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary">
+            <img src="/favicon.svg" alt="troy" className="size-5 dark:invert" />
+          </span>
+          <span className="min-w-0">
+            <span className="block text-[15px] leading-tight font-semibold tracking-tight">troy</span>
+            <span className="block text-[10px] tracking-[0.08em] text-muted-foreground uppercase">minimal ai router</span>
+          </span>
+        </div>
+        <button type="button" onClick={onClose} aria-label="close menu" className="rounded-full p-1.5 hover:bg-muted lg:hidden">
+          <X className="size-4" />
+        </button>
       </div>
 
       <nav ref={navRef} className="relative flex-1 space-y-1 px-4 py-2">

@@ -16,9 +16,26 @@ interface SessionInfo {
   defaultPass: boolean;
 }
 
+function pageFromHash(): PageId {
+  const h = location.hash.slice(1).split("/")[0];
+  if ((["usage", "providers", "combos", "tools", "settings"] as const).includes(h as PageId)) return h as PageId;
+  return "usage";
+}
 export default function App() {
-  const [page, setPage] = useState<PageId>("usage");
+  const [page, setPage] = useState<PageId>(() => pageFromHash());
   const [session, setSession] = useState<SessionInfo | null>(null);
+
+  useEffect(() => {
+    const onHash = () => setPage(pageFromHash());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
+  const navigate = (p: PageId) => {
+    location.hash = p;
+    setPage(p);
+  };
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   useEffect(() => {
     initDark();
@@ -40,9 +57,10 @@ export default function App() {
 
   return (
     <div className="dot-grid flex h-screen overflow-hidden text-foreground">
-      <Sidebar page={page} onNavigate={setPage} />
+      <Sidebar page={page} onNavigate={(p) => { navigate(p); setDrawerOpen(false); }} open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+      {drawerOpen ? <button type="button" aria-label="close menu" onClick={() => setDrawerOpen(false)} className="fixed inset-0 z-30 bg-black/30 lg:hidden" /> : null}
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <Topbar page={page} onLogout={() => setSession({ ...session, authed: false })} />
+        <Topbar page={page} onLogout={() => setSession({ ...session, authed: false })} onMenu={() => setDrawerOpen((v) => !v)} />
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5 lg:p-8">
           <div key={page} className="view-switch mx-auto max-w-7xl space-y-5">
             {page === "usage" && <UsagePage />}
