@@ -12,7 +12,7 @@ import {
   RefreshCw,
   Sparkles,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "../../lib/utils";
 import { type ApiKeyInfo, api, type Combo, type LogRow, type SavedModel, useApi } from "../api";
 import { CopyButton } from "../copy-button";
@@ -224,10 +224,10 @@ export function ToolsPage() {
   const [pluginMsg, setPluginMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [installingDsh, setInstallingDsh] = useState(false);
   const [dshMsg, setDshMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const logs = useApi<LogRow[]>("/api/logs?limit=100");
-  const saved = useApi<SavedModel[]>("/api/models");
-  const combos = useApi<Combo[]>("/api/combos");
-  const keyInfo = useApi<ApiKeyInfo>("/api/key");
+  const logs = useApi<LogRow[]>("/api/logs?limit=100", { interval: 10000 });
+  const saved = useApi<SavedModel[]>("/api/models", { interval: 3000 });
+  const combos = useApi<Combo[]>("/api/combos", { interval: 5000 });
+  const keyInfo = useApi<ApiKeyInfo>("/api/key", { interval: 10000 });
   const chosen = [...(saved.data ?? [])].sort((a, b) => (a.created_at < b.created_at ? 1 : -1)).map((m) => m.spec);
   const comboList = combos.data ?? [];
   const comboMap = new Map(comboList.map((c) => [c.name, c] as const));
@@ -237,6 +237,30 @@ export function ToolsPage() {
   const model = selectedModel && validIds.has(selectedModel) ? selectedModel : fallbackModel;
   const activeCombo = comboMap.get(model) ?? null;
   const key = keyInfo.data?.key ?? KEY_PLACEHOLDER;
+
+  // if the selected model was deleted (chosen list no longer contains it), reset so snippets fall back
+  useEffect(() => {
+    if (selectedModel && !validIds.has(selectedModel)) setSelectedModel("");
+  }, [selectedModel, chosen.length, comboList.length]);
+
+  // refresh immediately when the tab regains focus or page becomes visible (covers cross-page delete)
+  useEffect(() => {
+    const onFocus = () => {
+      saved.refetch();
+      combos.refetch();
+      logs.refetch();
+      keyInfo.refetch();
+    };
+    const onVis = () => {
+      if (document.visibilityState === "visible") onFocus();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [saved, combos, logs, keyInfo]);
 
   const rotate = async () => {
     setRotating(true);

@@ -110,7 +110,7 @@ export function ProvidersPage() {
 }
 
 function Overview({ onOpen }: { onOpen: (id: string) => void }) {
-  const providers = useApi<ProviderCat[]>("/api/providers");
+  const providers = useApi<ProviderCat[]>("/api/providers", { interval: 5000 });
 
   return (
     <div className="space-y-4">
