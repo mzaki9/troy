@@ -21,6 +21,8 @@ const MARKER_PHRASE = "You are Buffy, the strategic coding assistant";
 /** session is ready until expiresAt minus this margin */
 const EXPIRY_MARGIN_MS = 5_000;
 const RUN_TTL_MS = 6 * 60 * 60 * 1000;
+/** boot-stable client_id — per-boot wf- + 8 [a-z0-9] for cf-worker corroboration, not per-request */
+const BOOT_CLIENT_ID = `wf-${Math.random().toString(36).slice(2, 10).padEnd(8, "0").slice(0, 8)}`;
 
 type Obj = Record<string, unknown>;
 
@@ -322,7 +324,7 @@ export function wrapFreebuff(
 ): Obj {
   const payload: Obj = { ...input, stream: true, provider: { data_collection: "deny" } };
   if (!Array.isArray(payload.stop)) payload.stop = ["cb_easp"];
-  const metadata: Obj = { run_id: opts.runId, client_id: Math.random().toString(36).substring(2, 15) };
+  const metadata: Obj = { run_id: opts.runId, client_id: BOOT_CLIENT_ID };
   if (opts.instanceId) metadata.freebuff_instance_id = opts.instanceId;
   if (opts.traceSessionId) metadata.trace_session_id = opts.traceSessionId;
   if (typeof opts.step === "number") metadata.step = opts.step;

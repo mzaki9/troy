@@ -334,6 +334,7 @@ export class Store {
       row.rtk_saved ?? 0,
       row.rtk_seen ?? 0,
     ];
+    if (this.logQueue.length >= 10_000) this.logQueue.shift();
     this.logQueue.push(rec);
   }
 

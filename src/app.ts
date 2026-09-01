@@ -45,7 +45,7 @@ export interface TroyServer {
 }
 
 const SESSION_COOKIE = "troy_session";
-const SESSION_TTL_MS = 30 * 24 * 3600 * 1000;
+const SESSION_TTL_MS = 7 * 24 * 3600 * 1000;
 
 function readCookies(request: Request): Record<string, string> {
   const out: Record<string, string> = {};
@@ -62,8 +62,8 @@ function readCookies(request: Request): Record<string, string> {
   return out;
 }
 
-function setSessionCookie(token: string): string {
-  return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`;
+function setSessionCookie(token: string, secure = false): string {
+  return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}${secure ? "; Secure" : ""}`;
 }
 
 function json(data: unknown, status = 200, extra?: Record<string, string>): Response {
@@ -73,8 +73,52 @@ function json(data: unknown, status = 200, extra?: Record<string, string>): Resp
   });
 }
 
+const BODY_LIMIT_API = 1 << 20; // 1MB for /api
+const BODY_LIMIT_PROXY = 4 << 20; // 4MB for /v1 (images)
+
+function isPrivateHostname(hostname: string): boolean {
+  const h = hostname.toLowerCase();
+  if (h === "localhost" || h === "::1" || h === "0.0.0.0") return true;
+  // IPv4
+  const v4 = h.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    if (a === 10) return true;
+    if (a === 127) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 0) return true;
+  }
+  // IPv6 private
+  if (h.startsWith("fc") || h.startsWith("fd") || h === "::" || h.startsWith("::ffff:")) {
+    // fc00::/7, ::ffff: private mapped
+    if (h.startsWith("fc") || h.startsWith("fd")) return true;
+  }
+  if (h.endsWith(".localhost")) return true;
+  return false;
+}
+
+function assertPublicUrl(urlStr: string): void {
+  let u: URL;
+  try {
+    u = new URL(urlStr);
+  } catch {
+    throw new Error("invalid url");
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("url must be http(s)");
+  const h = u.hostname.toLowerCase();
+  const isLoopback = h === "127.0.0.1" || h === "localhost" || h === "::1" || h === "0.0.0.0";
+  if (!isLoopback && isPrivateHostname(h)) throw new Error("private address blocked");
+}
+
 function readBody(request: Request): Promise<unknown> {
+  const len = Number(request.headers.get("content-length") ?? 0);
+  const isProxy = request.url.includes("/v1/");
+  const limit = isProxy ? BODY_LIMIT_PROXY : BODY_LIMIT_API;
+  if (len > limit) return Promise.resolve(null);
   return request.text().then((t) => {
+    if (t.length > limit) return null;
     try {
       return JSON.parse(t);
     } catch {
@@ -93,12 +137,22 @@ function isV1Path(path: string, method: string): boolean {
   return false;
 }
 
-function cors(request: Request): Response {
-  const origin = request.headers.get("origin");
+function cors(request: Request, url?: URL): Response {
+  let origin = request.headers.get("origin") ?? "*";
+  if (url && origin !== "*") {
+    try {
+      const allowed = new Set<string>([url.origin]);
+      const extra = process.env.TROY_CORS_ORIGINS;
+      if (extra) for (const o of extra.split(",")) if (o.trim()) allowed.add(o.trim());
+      if (!allowed.has(origin)) origin = url.origin;
+    } catch {
+      origin = url.origin;
+    }
+  }
   return new Response(null, {
     status: 204,
     headers: {
-      "access-control-allow-origin": origin ?? "*",
+      "access-control-allow-origin": origin,
       "access-control-allow-methods": "GET,POST,PUT,DELETE,OPTIONS",
       "access-control-allow-headers": "content-type,authorization,x-api-key",
       "access-control-max-age": "86400",
@@ -140,6 +194,57 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
       for (const [token, exp] of sessions) if (exp < now) sessions.delete(token);
     }, 3_600_000);
     sessionSweep.unref?.();
+  }
+
+  // login rate limiter: 5/min/IP
+  const loginAttempts = new Map<string, { count: number; first: number; blockedUntil?: number }>();
+  function clientIp(req: Request): string {
+    return (
+      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      req.headers.get("x-real-ip")?.trim() ||
+      "127.0.0.1"
+    );
+  }
+  function isLoginAllowed(ip: string): boolean {
+    const now = Date.now();
+    const rec = loginAttempts.get(ip);
+    if (!rec) return true;
+    if (rec.blockedUntil && rec.blockedUntil > now) return false;
+    if (rec.blockedUntil && rec.blockedUntil <= now) {
+      loginAttempts.delete(ip);
+      return true;
+    }
+    if (now - rec.first > 60_000) {
+      loginAttempts.delete(ip);
+      return true;
+    }
+    return rec.count < 5;
+  }
+  function noteLoginAttempt(ip: string, success: boolean): void {
+    const now = Date.now();
+    if (success) {
+      loginAttempts.delete(ip);
+      return;
+    }
+    const rec = loginAttempts.get(ip);
+    if (!rec || now - rec.first > 60_000) {
+      loginAttempts.set(ip, { count: 1, first: now });
+      return;
+    }
+    rec.count += 1;
+    if (rec.count >= 5) rec.blockedUntil = now + 60_000;
+  }
+  function allowedOrigin(req: Request, url: URL): string {
+    const origin = req.headers.get("origin");
+    if (!origin) return "*";
+    try {
+      const allowed = new Set<string>([url.origin]);
+      const extra = process.env.TROY_CORS_ORIGINS;
+      if (extra) for (const o of extra.split(",")) if (o.trim()) allowed.add(o.trim());
+      return allowed.has(origin) ? origin : url.origin;
+    } catch {
+      return url.origin;
+    }
   }
 
   function authed(request: Request): boolean {
@@ -227,26 +332,35 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
       const url = new URL(request.url);
       const path = url.pathname;
 
-      if (request.method === "OPTIONS") return cors(request);
+      if (request.method === "OPTIONS") return cors(request, url);
 
       // ---- dashboard password gate ----
       if (path === "/api/session" && request.method === "GET") {
         return json({ authed: authed(request), defaultPass: !dashPass });
       }
       if (path === "/api/login" && request.method === "POST") {
+        const ip = clientIp(request);
+        if (!isLoginAllowed(ip)) {
+          return json({ error: "too many login attempts, try again in 60s" }, 429, {
+            "retry-after": "60",
+          });
+        }
         return readBody(request).then(async (b) => {
           const body = b as { password?: string } | null;
           if (!(await checkDashboardPassword(body?.password))) {
+            noteLoginAttempt(ip, false);
             return json({ error: "wrong dashboard password" }, 401);
           }
+          noteLoginAttempt(ip, true);
           const token = newSessionToken();
           sessions.set(token, Date.now() + SESSION_TTL_MS);
+          const secure = url.protocol === "https:";
           return new Response(JSON.stringify({ ok: true }), {
             status: 200,
             headers: {
               "content-type": "application/json",
-              "access-control-allow-origin": "*",
-              "set-cookie": setSessionCookie(token),
+              "access-control-allow-origin": allowedOrigin(request, url),
+              "set-cookie": setSessionCookie(token, secure),
             },
           });
         });
@@ -257,8 +371,8 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
         return new Response(JSON.stringify({ ok: true }), {
           headers: {
             "content-type": "application/json",
-            "access-control-allow-origin": "*",
-            "set-cookie": `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`,
+            "access-control-allow-origin": allowedOrigin(request, url),
+            "set-cookie": `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`,
           },
         });
       }
@@ -410,7 +524,12 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
         if (!conn && def.auth !== "none") {
           return json({ error: "no key", url: modelsUrl, models: [] }, 502);
         }
-        return fetch(modelsUrl, { headers, signal: AbortSignal.timeout(15000), redirect: "follow" })
+        try {
+          assertPublicUrl(modelsUrl);
+        } catch (e) {
+          return json({ error: e instanceof Error ? e.message : "blocked private address", url: modelsUrl, models: [] }, 400);
+        }
+        return fetch(modelsUrl, { headers, signal: AbortSignal.timeout(15000), redirect: "manual" })
           .then(async (res) => {
             if (!res.ok) {
               const text = await res.text().catch(() => "");
@@ -488,6 +607,8 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
           }
           dashPass = { salt: "", hash: await hashPassword(next) };
           store.putDashPass(dashPass);
+          // invalidate all dashboard sessions on password change
+          sessions.clear();
           return json({ ok: true });
         });
       }
@@ -529,6 +650,11 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
             if (getProvider(id)) return json({ error: `provider '${id}' already exists` }, 400);
             const baseUrl = body?.baseUrl?.trim() ?? "";
             if (!/^https?:\/\//.test(baseUrl)) return json({ error: "baseUrl must start with http(s)://" }, 400);
+            try {
+              assertPublicUrl(baseUrl);
+            } catch (e) {
+              return json({ error: e instanceof Error ? e.message : "blocked private address" }, 400);
+            }
             const auth = body?.auth === "none" || body?.auth === "raw" ? body.auth : "bearer";
             const p: Provider = { id, aliases: [id], name: body?.name?.trim() || undefined, baseUrl, auth };
             store.putCustomProvider(id, p);
@@ -560,6 +686,14 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
             } | null;
             if (!body?.provider || !body.api_key) return json({ error: "need provider + api_key" }, 400);
             if (!getProvider(body.provider)) return json({ error: `unknown provider: ${body.provider}` }, 400);
+            if (body.base_url) {
+              if (!/^https?:\/\//.test(body.base_url)) return json({ error: "base_url must start with http(s)://" }, 400);
+              try {
+                assertPublicUrl(body.base_url);
+              } catch (e) {
+                return json({ error: e instanceof Error ? e.message : "blocked private address" }, 400);
+              }
+            }
             return json(
               store.addConnection({
                 provider: body.provider,
@@ -578,6 +712,15 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
         if (request.method === "PUT") {
           return readBody(request).then((b) => {
             if (!b) return json({ error: "bad body" }, 400);
+            const upd = b as { base_url?: string } | null;
+            if (upd?.base_url) {
+              if (!/^https?:\/\//.test(upd.base_url)) return json({ error: "base_url must start with http(s)://" }, 400);
+              try {
+                assertPublicUrl(upd.base_url);
+              } catch (e) {
+                return json({ error: e instanceof Error ? e.message : "blocked private address" }, 400);
+              }
+            }
             const row = store.updateConnection(id, b as never);
             return json(row ?? { error: "unknown connection" }, row ? 200 : 404);
           });

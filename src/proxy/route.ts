@@ -39,6 +39,26 @@ const inflight = new Map<string, number>();
 // hoisted hot-path constant: no per-request RegExp allocation
 const RE_PLACEHOLDER = /\{(\w+)\}/g;
 
+function isPrivateHostname(hostname: string): boolean {
+  const h = hostname.toLowerCase();
+  if (h === "localhost" || h === "::1" || h === "0.0.0.0") return true;
+  const v4 = h.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    if (a === 10) return true;
+    if (a === 127) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 0) return true;
+  }
+  if (h.startsWith("fc") || h.startsWith("fd") || h === "::" || h.startsWith("::ffff:")) {
+    if (h.startsWith("fc") || h.startsWith("fd")) return true;
+  }
+  if (h.endsWith(".localhost")) return true;
+  return false;
+}
+
 export const COMBO_STRATEGIES = new Set(["fallback", "random", "round-robin"]);
 
 const now = () => Date.now();
@@ -134,12 +154,23 @@ async function forward(
   const headers: Record<string, string> = { "content-type": "application/json", ...authHeaders(def, conn) };
   if (wantsStream || def.id === "command-code" || def.id === "freebuff") headers.accept = "text/event-stream";
   if (def.id === "command-code") headers["x-session-id"] = crypto.randomUUID();
-  return fetch(buildBaseUrl(def, conn), {
+  const target = buildBaseUrl(def, conn);
+  try {
+    const u = new URL(target);
+    const h = u.hostname.toLowerCase();
+    // allow loopback for local dev/tests (store.addConnection can set localhost)
+    const isLoopback = h === "127.0.0.1" || h === "localhost" || h === "::1" || h === "0.0.0.0";
+    if (!isLoopback && isPrivateHostname(h)) throw new Error("private address blocked");
+  } catch (e) {
+    if (e instanceof Error && e.message === "private address blocked") throw e;
+    // invalid url will be caught by fetch
+  }
+  return fetch(target, {
     method: "POST",
     headers,
     body: bodyJson,
     signal,
-    redirect: "follow",
+    redirect: "manual",
   });
 }
 
@@ -335,7 +366,12 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
           // TTFB guard: streams/CC must show life within one idle gap,
           // non-stream gets the generous whole-request ceiling.
           const ttfb = effBody.stream === true || cc ? STREAM_IDLE_MS : UPSTREAM_TIMEOUT_MS;
-          res = await withDeadline(forward(fbJson ?? bodyJson, conn, def, deps.signal, effBody.stream === true), ttfb);
+          const ac = new AbortController();
+          if (deps.signal) {
+            if (deps.signal.aborted) ac.abort((deps.signal as AbortSignal & { reason?: unknown }).reason);
+            else deps.signal.addEventListener("abort", () => ac.abort((deps.signal as AbortSignal & { reason?: unknown }).reason), { once: true });
+          }
+          res = await withDeadline(forward(fbJson ?? bodyJson, conn, def, ac.signal, effBody.stream === true), ttfb, ac);
         } catch (err) {
           const msg = err instanceof Error ? err.message : "network error";
           deps.cooldowns.fail(conn.id, model, 0, msg, circuitKey);

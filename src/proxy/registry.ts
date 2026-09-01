@@ -73,7 +73,7 @@ export const PROVIDERS: Provider[] = [
   {
     id: "siliconflow",
     aliases: ["siliconflow"],
-    baseUrl: "https://api.siliconflow.com/v1/chat/completions",
+    baseUrl: "https://api.siliconflow.cn/v1/chat/completions",
     auth: "bearer",
   },
   {
@@ -156,7 +156,7 @@ export const PROVIDERS: Provider[] = [
   {
     id: "bazaarlink",
     aliases: ["bzl", "bazaar-link"],
-    baseUrl: "https://bazaarlink.ai/api/v1/chat/completions",
+    baseUrl: "https://api.bazaarlink.ai/api/v1/chat/completions",
     auth: "bearer",
     headers: httpref,
   },
@@ -278,7 +278,7 @@ export const PROVIDERS: Provider[] = [
   {
     id: "byteplus",
     aliases: ["byteplus", "bpm"],
-    baseUrl: "https://ark.ap-southeast.bytepluses.com/api/v3/chat/completions",
+    baseUrl: "https://ark.ap-southeast.bytepluses.com/api/coding/v3/chat/completions",
     auth: "bearer",
   },
   {

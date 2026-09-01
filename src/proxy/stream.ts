@@ -9,16 +9,25 @@ export const STREAM_IDLE_MS = Math.max(1000, Number(process.env.TROY_STREAM_IDLE
  *  reasoning generations finish; hung TCP dies here instead of never. Streams
  *  are exempt: their health is judged by STREAM_IDLE_MS gaps, not total time. */
 export const UPSTREAM_TIMEOUT_MS = Math.max(1000, Number(process.env.TROY_UPSTREAM_TIMEOUT_MS ?? 300_000));
+/** per-line SSE buffer cap — mirrors new-api relay/helper/stream_scanner.go DefaultMax 128MB
+ *  but README says 64MB; default 64MB via env STREAM_SCANNER_MAX_BUFFER_MB. */
+export const STREAM_BUF_CAP = Math.max(1, Number(process.env.STREAM_SCANNER_MAX_BUFFER_MB ?? 64)) << 20;
 
 /** Reject if `p` hasn't settled within `ms`. Used for connect/TTFB deadlines —
  *  clearing happens in the caller's finally, so resolved promises (and their
- *  bodies) are never touched by the timer. */
-export function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
+ *  bodies) are never touched by the timer. If an AbortController is supplied
+ *  it is aborted on timeout so the orphan fetch socket is torn down. */
+export function withDeadline<T>(p: Promise<T>, ms: number, controller?: AbortController): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   return Promise.race([
     p,
     new Promise<never>((_, rej) => {
-      timer = setTimeout(() => rej(new Error(`upstream sent nothing within ${ms}ms`)), ms);
+      timer = setTimeout(() => {
+        try {
+          controller?.abort(new Error(`upstream sent nothing within ${ms}ms`));
+        } catch {}
+        rej(new Error(`upstream sent nothing within ${ms}ms`));
+      }, ms);
     }),
   ]).finally(() => clearTimeout(timer));
 }
@@ -29,7 +38,11 @@ export function passthrough(res: Response, stream: boolean): Response {
   const headers = new Headers({ "access-control-allow-origin": "*" });
   const ct = res.headers.get("content-type");
   headers.set("content-type", ct ?? (stream ? "text/event-stream" : "application/json"));
-  if (stream) headers.set("cache-control", "no-cache");
+  if (stream) {
+    headers.set("cache-control", "no-cache");
+    headers.set("connection", "keep-alive");
+    headers.set("x-accel-buffering", "no");
+  }
   for (const h of ["retry", "x-request-id"]) {
     const v = res.headers.get(h);
     if (v) headers.set(h, v);
@@ -185,6 +198,15 @@ export function scanUsage(onUsage: (u: Record<string, number>) => void): Transfo
   return new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, c) {
       buf += dec.decode(chunk, { stream: true });
+      if (buf.length > STREAM_BUF_CAP) {
+        c.enqueue(
+          ENC.encode(
+            `data: ${JSON.stringify({ error: { message: `upstream buffer exceeds ${STREAM_BUF_CAP} bytes`, type: "server_error", code: "too_large" } })}\n\n`,
+          ),
+        );
+        c.error(new Error(`upstream buffer exceeds ${STREAM_BUF_CAP} bytes`));
+        return;
+      }
       for (let i = buf.indexOf("\n"); i >= 0; i = buf.indexOf("\n")) {
         const line = buf.slice(0, i).trim();
         buf = buf.slice(i + 1);
@@ -235,11 +257,35 @@ export function endMark(body: ReadableStream<Uint8Array>, onEnd: () => void): Re
 
 /** Cut a stream whose upstream stalls: no chunk within `ms` → one SSE error
  *  frame, then close (dsh per-read idle watchdog). Covers mid-stream death
- *  that takeHead's first-chunk guard cannot see. */
-export function idleGuard(body: ReadableStream<Uint8Array>, ms: number): ReadableStream<Uint8Array> {
+ *  that takeHead's first-chunk guard cannot see. Also emits `: ping` keepalive
+ *  every 15s so nginx/proxy idle timeouts don't close long reasoning gaps. */
+export function idleGuard(
+  body: ReadableStream<Uint8Array>,
+  ms: number,
+  pingMs = 15_000,
+): ReadableStream<Uint8Array> {
   const reader = body.getReader();
+  let pingTimer: ReturnType<typeof setInterval> | undefined;
+  let closed = false;
+  const clearPing = () => {
+    if (pingTimer) {
+      clearInterval(pingTimer);
+      pingTimer = undefined;
+    }
+  };
 
   return new ReadableStream<Uint8Array>({
+    start(c) {
+      // keepalive ping — matches new-api stream_scanner.go:150 pingTicker 10s
+      pingTimer = setInterval(() => {
+        if (closed) return;
+        try {
+          c.enqueue(ENC.encode(": ping\n\n"));
+        } catch {
+          clearPing();
+        }
+      }, pingMs);
+    },
     async pull(c) {
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
@@ -257,22 +303,30 @@ export function idleGuard(body: ReadableStream<Uint8Array>, ms: number): Readabl
               })}\n\n`,
             ),
           );
+          closed = true;
+          clearPing();
           c.close();
           reader.cancel().catch(() => {});
           return;
         }
         if (n.done) {
+          closed = true;
+          clearPing();
           c.close();
           return;
         }
         c.enqueue(n.value);
       } catch {
+        closed = true;
+        clearPing();
         c.close();
       } finally {
         clearTimeout(timer);
       }
     },
     cancel() {
+      closed = true;
+      clearPing();
       reader.cancel().catch(() => {});
     },
   });
@@ -294,6 +348,15 @@ export function sseTranslate(
   return new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
       buf += dec.decode(chunk, { stream: true });
+      if (buf.length > STREAM_BUF_CAP) {
+        controller.enqueue(
+          ENC.encode(
+            `data: ${JSON.stringify({ error: { message: `upstream buffer exceeds ${STREAM_BUF_CAP} bytes`, type: "server_error", code: "too_large" } })}\n\n`,
+          ),
+        );
+        controller.error(new Error(`upstream buffer exceeds ${STREAM_BUF_CAP} bytes`));
+        return;
+      }
       for (let idx = buf.indexOf("\n"); idx >= 0; idx = buf.indexOf("\n")) {
         const line = buf.slice(0, idx).trim();
         buf = buf.slice(idx + 1);
