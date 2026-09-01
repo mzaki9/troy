@@ -48,6 +48,11 @@ export interface CooldownSink {
   append(e: StateEvent): void;
 }
 
+export interface RRChainPersist {
+  get(name: string): number;
+  set(name: string, n: number): void;
+}
+
 export class CooldownStore {
   private states = new Map<string, CooldownState>();
   private rr = new Map<string, { id: string; count: number }>();
@@ -61,12 +66,18 @@ export class CooldownStore {
   constructor(
     private readonly sink?: CooldownSink,
     private readonly trace?: (line: string) => void,
+    private readonly rrPersist?: RRChainPersist,
   ) {}
 
   /** Rebuild in-memory state from the durable event log (boot recovery).
    *  Expired entries are dropped; the newest fail per key wins via max(). */
-  static replay(events: StateEvent[], sink?: CooldownSink, trace?: (line: string) => void): CooldownStore {
-    const st = new CooldownStore(sink, trace);
+  static replay(
+    events: StateEvent[],
+    sink?: CooldownSink,
+    trace?: (line: string) => void,
+    rrPersist?: RRChainPersist,
+  ): CooldownStore {
+    const st = new CooldownStore(sink, trace, rrPersist);
     let locks = 0;
     let circuits = 0;
     for (const e of events) {
@@ -111,10 +122,19 @@ export class CooldownStore {
     }
   }
 
-  /** next start index for a round-robin combo chain */
+  /** next start index for a round-robin combo chain — persisted in kv so restarts keep rotation */
   nextChainStart(name: string): number {
-    const n = this.rrChain.get(name) ?? 0;
-    this.rrChain.set(name, n + 1);
+    const n = this.rrPersist ? this.rrPersist.get(name) : (this.rrChain.get(name) ?? 0);
+    const next = n + 1;
+    if (this.rrPersist) {
+      try {
+        this.rrPersist.set(name, next);
+      } catch {
+        /* persistence must never break routing */
+      }
+    } else {
+      this.rrChain.set(name, next);
+    }
     return n;
   }
 

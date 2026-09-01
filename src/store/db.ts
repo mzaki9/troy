@@ -311,6 +311,44 @@ export class Store {
     this.db.query("DELETE FROM kv WHERE scope = 'provider' AND key = ?").run(id);
   }
 
+  // ---- round-robin chain start (persisted) ----
+
+  getNextChainStart(name: string): number {
+    const row = this.db.query("SELECT value FROM kv WHERE scope = 'rrchain' AND key = ?").get(name) as
+      | { value: string }
+      | undefined;
+    if (!row) return 0;
+    try {
+      return Number(JSON.parse(row.value)) || 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  setNextChainStart(name: string, n: number): void {
+    this.db
+      .query(
+        "INSERT INTO kv (scope, key, value) VALUES ('rrchain', ?, ?) ON CONFLICT (scope, key) DO UPDATE SET value = excluded.value",
+      )
+      .run(name, JSON.stringify(n));
+  }
+
+  listRRChain(): Map<string, number> {
+    const rows = this.db.query("SELECT key, value FROM kv WHERE scope = 'rrchain'").all() as {
+      key: string;
+      value: string;
+    }[];
+    const m = new Map<string, number>();
+    for (const r of rows) {
+      try {
+        m.set(r.key, Number(JSON.parse(r.value)) || 0);
+      } catch {
+        /* skip */
+      }
+    }
+    return m;
+  }
+
   // ---- usage log (batched, off hot path) ----
 
   logRequest(row: {

@@ -12,8 +12,12 @@ mkdirSync(DATA_DIR, { recursive: true });
 const store = new Store(`${DATA_DIR}/troy.db`);
 store.startLogFlush(2000);
 // fold the durable state_events log back into live cooldowns/breakers (restart recovery)
-const cooldowns = CooldownStore.replay(store.foldStateEvents(), { append: (e) => store.appendStateEvent(e) }, (line) =>
-  console.log(`  ${line}`),
+// rrChain persisted in kv so round-robin rotation survives restarts
+const cooldowns = CooldownStore.replay(
+  store.foldStateEvents(),
+  { append: (e) => store.appendStateEvent(e) },
+  (line) => console.log(`  ${line}`),
+  { get: (n) => store.getNextChainStart(n), set: (n, v) => store.setNextChainStart(n, v) },
 );
 
 // per-request routing trace — off by default, TROY_TRACE=1 for full play-by-play

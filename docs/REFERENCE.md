@@ -10,6 +10,8 @@
 | `TROY_MAX_INFLIGHT` | `10` | preferred concurrent in-flight requests per account before load-spreading kicks in |
 | `TROY_STREAM_IDLE_MS` | `60000` (min 1000) | TTFB guard + stream idle watchdog |
 | `TROY_UPSTREAM_TIMEOUT_MS` | `300000` (min 1000) | non-stream request ceiling |
+| `STREAM_SCANNER_MAX_BUFFER_MB` | `64` | per-line SSE buf cap (new-api parity, before OOM) |
+| `TROY_CORS_ORIGINS` | `url.origin` | extra allowed `Origin` for dashboard (`*` otherwise) |
 | `TROY_ENRICH` | `limits,modalities` | models.dev enrichment layers; `""` disables |
 
 ## Proxy endpoints
@@ -21,8 +23,24 @@
 | POST | `/v1/responses` | OpenAI Responses bridge (Codex CLI) |
 | GET | `/v1/models` | combos (pseudo-models) + saved specs + connected providers |
 | GET | `/v1/models/<spec>` | single model entry |
+| GET | `/healthz` · `/api/healthz` | health check no-auth `{ ok: true }` |
 
-All accept the troy key via `Authorization: Bearer` or `x-api-key`.
+All accept the troy key via `Authorization: Bearer` or `x-api-key` (except `/healthz`).
+
+```bash
+# chat completions (stream)
+curl -s http://localhost:31337/v1/chat/completions \
+  -H "Authorization: Bearer sk-troy-..." -H "content-type: application/json" \
+  -d '{"model":"openai/gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}'
+
+# anthropic bridge
+curl -s http://localhost:31337/v1/messages \
+  -H "Authorization: Bearer sk-troy-..." -H "content-type: application/json" \
+  -d '{"model":"openai/gpt-4o","messages":[{"role":"user","content":"hi"}]}'
+
+# health
+curl -s http://localhost:31337/healthz
+```
 
 ## Dashboard API (`/api/*`, session login required)
 
@@ -71,4 +89,4 @@ All accept the troy key via `Authorization: Bearer` or `x-api-key`.
 
 `/` (dashboard), `/app.js`, `/styles.css`, `/favicon.svg`, `/providers/*`, `/assets/*`.
 
-Related: [AUTH.md](AUTH.md) · [STORAGE.md](STORAGE.md)
+Related: [AUTH.md](AUTH.md) · [CLI.md](CLI.md) · [ERRORS.md](ERRORS.md) · [STORAGE.md](STORAGE.md)
