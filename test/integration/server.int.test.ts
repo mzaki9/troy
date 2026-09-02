@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { TAG } from "../../src/logger";
 import { cookieHeader, createTestTroy, type TestTroy } from "../helpers/troy";
 
 let t: TestTroy;
@@ -139,6 +140,57 @@ describe("proxy + dashboard gate (integrated)", () => {
         })
       ).status,
     ).toBe(200);
+  });
+  test("read-only model endpoints are session-or-key", async () => {
+    expect((await fetch(`${t.url}/api/health`)).status).toBe(200);
+    expect((await fetch(`${t.url}/healthz`)).status).toBe(200);
+    expect((await fetch(`${t.url}/api/healthz`)).status).toBe(200);
+    expect((await fetch(`${t.url}/api/logs`)).status).toBe(401);
+    const apiKeyHeaders = { "x-api-key": t.apiKey } as Record<string, string>;
+    const r1 = await fetch(`${t.url}/api/models`, { headers: apiKeyHeaders });
+    expect([200, 502].includes(r1.status)).toBe(true);
+    const r2 = await fetch(`${t.url}/api/providers/freebuff/models`, { headers: apiKeyHeaders });
+    expect(r2.status).not.toBe(401);
+    expect(r2.status).toBe(200);
+    const r2b = await fetch(`${t.url}/api/providers/openai/models`, { headers: apiKeyHeaders });
+    expect(r2b.status).not.toBe(401);
+    const { cookie } = await t.login();
+    const r3b = await fetch(`${t.url}/v1/models`, { headers: cookieHeader(cookie) });
+    expect(r3b.status).toBe(200);
+    expect((await fetch(`${t.url}/v1/models`)).status).toBe(401);
+  });
+
+  test("logger TAG taxonomy", () => {
+    expect(TAG.HTTP).toBe("troy:http");
+    expect(TAG.AUTH).toBe("troy:auth");
+    expect(TAG.PROXY).toBe("troy:proxy");
+    expect(TAG.PROVIDER).toBe("troy:provider");
+    expect(TAG.STORE).toBe("troy:store");
+    expect(TAG.MODELSDEV).toBe("troy:modelsdev");
+    expect(TAG.SYSTEM).toBe("troy:system");
+  });
+
+  test("provider model probe cache", async () => {
+    const key = `cache-${Math.random().toString(36).slice(2, 8)}`;
+    t.upstream.setBehavior(key, {
+      status: 200,
+      body: JSON.stringify({ data: [{ id: "gpt-4o" }, { id: "gpt-4o-mini" }] }),
+    });
+    t.addConnection("openai", key);
+    const hdr = { "x-api-key": t.apiKey } as Record<string, string>;
+    const first = await fetch(`${t.url}/api/providers/openai/models`, { headers: hdr });
+    expect(first.status).toBe(200);
+    const j1 = (await first.json()) as { url: string; models: { id: string }[] };
+    expect(j1.models.length).toBe(2);
+    expect(first.headers.get("x-cache")).toBeNull();
+    const second = await fetch(`${t.url}/api/providers/openai/models`, { headers: hdr });
+    expect(second.status).toBe(200);
+    expect(second.headers.get("x-cache")).toBe("hit");
+    // within TTL upstream failure still served from cache (hit shields it)
+    t.upstream.setBehavior(key, { status: 500, body: "boom" });
+    const third = await fetch(`${t.url}/api/providers/openai/models`, { headers: hdr });
+    expect(third.status).toBe(200);
+    expect(third.headers.get("x-cache")).toBe("hit");
   });
 });
 
@@ -377,6 +429,7 @@ describe("proxy E2E via HTTP (integrated)", () => {
         })
       ).status,
     ).toBe(503);
+    t.cooldowns.flushPending();
     const events = t.store.foldStateEvents();
     expect(events.some((e) => e.kind === "fail")).toBe(true);
     const { CooldownStore } = await import("../../src/proxy/cooldown");

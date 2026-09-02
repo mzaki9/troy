@@ -1,8 +1,8 @@
 import { buildTroyServer } from "../../src/app";
 import { CooldownStore } from "../../src/proxy/cooldown";
+import type { StateEvent } from "../../src/store/db";
 import { Store } from "../../src/store/db";
 import { createMockUpstream, type MockUpstream } from "./upstream";
-
 export interface TestTroy {
   store: Store;
   cooldowns: CooldownStore;
@@ -35,8 +35,14 @@ export interface TestTroy {
  * Caller must call `t.stop()` in afterEach/afterAll.
  */
 export function createTestTroy(): TestTroy {
+  const prev = process.env.TROY_ALLOW_LOOPBACK;
+  process.env.TROY_ALLOW_LOOPBACK = "1";
   const store = new Store(":memory:");
-  const cooldowns = new CooldownStore({ append: (e) => store.appendStateEvent(e) });
+  // cooldown sink batches writes; expose batch path so flushPending syncs to DB
+  const cooldowns = new CooldownStore({
+    append: (e: StateEvent) => store.appendStateEvent(e),
+    appendBatch: (es: StateEvent[]) => store.appendStateEventsBatch(es),
+  } as unknown as { append: (e: StateEvent) => void });
   const upstream = createMockUpstream();
   const { server } = buildTroyServer({ store, cooldowns, port: 0, enableBackgroundTasks: false });
   const url = server.url.toString().replace(/\/$/, "");
@@ -85,8 +91,9 @@ export function createTestTroy(): TestTroy {
     try {
       upstream.stop();
     } catch {}
+    if (prev === undefined) delete process.env.TROY_ALLOW_LOOPBACK;
+    else process.env.TROY_ALLOW_LOOPBACK = prev;
   };
-
   return { store, cooldowns, upstream, url, apiKey, server, stop, fetch: troyFetch, login, addConnection, putCombo };
 }
 

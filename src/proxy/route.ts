@@ -1,3 +1,5 @@
+import { assertPlaceholderValue, isPrivateHostname } from "../lib/net";
+import { cLog, panic, TAG } from "../logger";
 import { enrich } from "../modelsdev";
 import { commandCodeReply, wrapCommandCode } from "../providers/commandcode";
 import {
@@ -15,8 +17,8 @@ import {
 import { type CavemanLevel, injectCaveman, injectPonytail, type PonytailLevel } from "../providers/inject";
 import { resolveEffortAlias } from "../providers/reasoning";
 import { compressMessages } from "../rtk";
-import type { Connection, Store } from "../store/db";
-import { type CooldownStore, parseRetryAfter } from "./cooldown";
+import type { Connection } from "../store/db";
+import { parseRetryAfter } from "./cooldown";
 import { getProvider, inferProvider, type Provider } from "./registry";
 import {
   endMark,
@@ -31,6 +33,7 @@ import {
   usageOf,
   withDeadline,
 } from "./stream";
+import type { ChatDeps } from "./types";
 
 /** per-account in-flight cap — one hot account may not eat all parallelism */
 const MAX_INFLIGHT_PER_CONN = Math.max(1, Number(process.env.TROY_MAX_INFLIGHT ?? 10));
@@ -38,26 +41,6 @@ const inflight = new Map<string, number>();
 
 // hoisted hot-path constant: no per-request RegExp allocation
 const RE_PLACEHOLDER = /\{(\w+)\}/g;
-
-function isPrivateHostname(hostname: string): boolean {
-  const h = hostname.toLowerCase();
-  if (h === "localhost" || h === "::1" || h === "0.0.0.0") return true;
-  const v4 = h.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
-  if (v4) {
-    const [a, b] = [Number(v4[1]), Number(v4[2])];
-    if (a === 10) return true;
-    if (a === 127) return true;
-    if (a === 169 && b === 254) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 0) return true;
-  }
-  if (h.startsWith("fc") || h.startsWith("fd") || h === "::" || h.startsWith("::ffff:")) {
-    if (h.startsWith("fc") || h.startsWith("fd")) return true;
-  }
-  if (h.endsWith(".localhost")) return true;
-  return false;
-}
 
 export const COMBO_STRATEGIES = new Set(["fallback", "random", "round-robin"]);
 
@@ -80,42 +63,17 @@ function tryAutoBan(conn: Connection, status: number, deps: ChatDeps): void {
   if (status !== 401 && status !== 403 && status !== 404 && status !== 402) return;
   if (!recordAutoBanFail(conn.id)) return;
   try {
-    const cur = deps.store.listConnections().find((c) => c.id === conn.id);
+    const cur = deps.store.getConnectionById(conn.id);
     if (cur && cur.is_active === 1) {
       deps.store.updateConnection(conn.id, { is_active: 0 } as unknown as Partial<Connection>);
       try {
-        console.log(`  auto-ban ${conn.id.slice(0, 8)} after ${AUTO_BAN_THRESHOLD} auth/quota fails`);
+        cLog(TAG.PROXY, { msg: `auto-ban ${conn.id.slice(0, 8)} after ${AUTO_BAN_THRESHOLD} auth/quota fails` });
       } catch {}
     }
   } catch {}
 }
 
-export interface LogRow {
-  provider: string;
-  model: string;
-  combo?: string;
-  status: string;
-  latency_ms: number;
-  tokens?: Record<string, number>;
-  /** RTK compressor: chars removed / chars that entered it (0 when off or no hit) */
-  rtk_saved?: number;
-  rtk_seen?: number;
-  request_id?: string | null;
-}
-
-export interface ChatDeps {
-  store: Store;
-  cooldowns: CooldownStore;
-  strategy: string;
-  rtkOn: boolean;
-  cavemanLevel: string;
-  ponytailLevel: string;
-  signal?: AbortSignal;
-  requestId?: string;
-  onLog: (row: LogRow) => void;
-  /** optional terminal trace for routing decisions (TROY_TRACE=1) */
-  onTrace?: (line: string) => void;
-}
+export type { ChatDeps, LogRow } from "./types";
 
 function openaiError(status: number, message: string, requestId?: string): Response {
   const headers: Record<string, string> = { "content-type": "application/json", "access-control-allow-origin": "*" };
@@ -162,6 +120,7 @@ export function buildBaseUrl(def: Provider, conn: Connection): string {
   const base = conn.base_url ?? def.baseUrl;
   if (!def.placeholders) return base;
   const extra = safeExtra(conn);
+  for (const [k, v] of Object.entries(extra)) assertPlaceholderValue(k, String(v));
   return base.replace(RE_PLACEHOLDER, (_, k: string) => String(extra[k] ?? ""));
 }
 
@@ -195,6 +154,7 @@ async function forward(
   try {
     const u = new URL(target);
     const h = u.hostname.toLowerCase();
+    // loopback allowed only when TROY_ALLOW_LOOPBACK=1 — see src/lib/net.ts
     // allow loopback for local dev/tests (store.addConnection can set localhost)
     const isLoopback = h === "127.0.0.1" || h === "localhost" || h === "::1" || h === "0.0.0.0";
     if (!isLoopback && isPrivateHostname(h)) throw new Error("private address blocked");
@@ -270,6 +230,7 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
     // last member attempted — failure logs name it instead of a blanket "unknown"
     let lastProvider = "unknown";
     let lastModel = String(body.model);
+    const providerCache = new Map<string, Connection[]>();
 
     for (const spec of chain) {
       const { provider, model: rawModel } = parseModelStr(spec);
@@ -318,7 +279,13 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
       const fb = def.id === "freebuff";
       const wrapped = cc ? wrapCommandCode(effBody) : null;
       const bodyJson = wrapped ? JSON.stringify(wrapped.body) : effBodyStr;
-      let accounts = deps.store.listConnections(provider);
+      let accounts: Connection[];
+      if (providerCache.has(provider)) {
+        accounts = providerCache.get(provider)!;
+      } else {
+        accounts = deps.store.listConnections(provider);
+        providerCache.set(provider, accounts);
+      }
       if (def.auth === "none" && accounts.length === 0) {
         // keyless providers (opencode zen free tier) need no stored key — route without one
         accounts = [
@@ -637,15 +604,17 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
       headers,
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    const stack = err instanceof Error ? err.stack : undefined;
-    try {
-      console.error(`[panic] handleChat requestId=${deps.requestId ?? "-"} ${msg}`, stack ?? "");
-    } catch {}
+    panic(TAG.PROXY, "handleChat", err, { requestId: deps.requestId ?? "-" });
     const headers: Record<string, string> = { "content-type": "application/json", "access-control-allow-origin": "*" };
     if (deps.requestId) headers["x-request-id"] = deps.requestId;
     return new Response(
-      JSON.stringify({ error: { message: `panic: ${msg.slice(0, 200)}`, type: "troy_panic", code: "internal" } }),
+      JSON.stringify({
+        error: {
+          message: `panic: ${(err instanceof Error ? err.message : String(err)).slice(0, 200)}`,
+          type: "troy_panic",
+          code: "internal",
+        },
+      }),
       {
         status: 500,
         headers,

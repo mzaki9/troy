@@ -12,7 +12,8 @@ const STICKY_ROUND_ROBIN_LIMIT = 3;
 const CIRCUIT_WINDOW_MS = 60000;
 const CIRCUIT_THRESHOLD = 3;
 const CIRCUIT_OPEN_MS = 30000;
-
+const BATCH_MAX = 50;
+const BATCH_INTERVAL_MS = 1000;
 const RE_DIGITS = /^\d+$/;
 
 const ERROR_TEXT_BACKOFF = ["rate limit", "too many requests", "capacity", "overloaded"];
@@ -62,12 +63,22 @@ export class CooldownStore {
   private circuits = new Map<string, { fails: number[]; openUntil: number }>();
   /** per-combo round-robin start index (chain-level rotation) */
   private rrChain = new Map<string, number>();
+  private pending: StateEvent[] = [];
+  private flushTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
-    private readonly sink?: CooldownSink,
+    private sink?: CooldownSink,
     private readonly trace?: (line: string) => void,
     private readonly rrPersist?: RRChainPersist,
-  ) {}
+  ) {
+    if (this.sink) this.ensureFlushTimer();
+  }
+
+  private ensureFlushTimer() {
+    if (this.flushTimer || !this.sink) return;
+    this.flushTimer = setInterval(() => this.flushPending(), BATCH_INTERVAL_MS);
+    (this.flushTimer as unknown as { unref?: () => void }).unref?.();
+  }
 
   /** Rebuild in-memory state from the durable event log (boot recovery).
    *  Expired entries are dropped; the newest fail per key wins via max(). */
@@ -105,12 +116,45 @@ export class CooldownStore {
     return st;
   }
 
-  private persist(e: StateEvent) {
-    try {
-      this.sink?.append(e);
-    } catch {
-      /* durability must never break routing */
+  private enqueue(e: StateEvent) {
+    if (!this.sink) return;
+    this.pending.push(e);
+    if (this.pending.length >= BATCH_MAX) this.flushPending();
+    else this.ensureFlushTimer();
+  }
+
+  flushPending(): void {
+    if (!this.sink || this.pending.length === 0) return;
+    const batch = this.pending.splice(0, this.pending.length);
+    // ponytail: coalesce into one transaction when sink exposes appendBatch
+    const sink: CooldownSink & { appendBatch?: (es: StateEvent[]) => void } = this.sink as CooldownSink & {
+      appendBatch?: (es: StateEvent[]) => void;
+    };
+    if (batch.length === 1 || !sink.appendBatch) {
+      for (const e of batch) {
+        try {
+          this.sink.append(e);
+        } catch {
+          /* durability must never break routing */
+        }
+      }
+      return;
     }
+    try {
+      sink.appendBatch(batch);
+    } catch {
+      for (const e of batch) {
+        try {
+          this.sink.append(e);
+        } catch {
+          /* durability must never break routing */
+        }
+      }
+    }
+  }
+
+  private persist(e: StateEvent) {
+    this.enqueue(e);
   }
 
   /** terminal trace line — account ids shortened to 8 chars for readability */
@@ -123,6 +167,7 @@ export class CooldownStore {
   }
 
   /** next start index for a round-robin combo chain — persisted in kv so restarts keep rotation */
+  // ponytail: persist rrChain lazily if needed — current path does SELECT+INSERT per RR request
   nextChainStart(name: string): number {
     const n = this.rrPersist ? this.rrPersist.get(name) : (this.rrChain.get(name) ?? 0);
     const next = n + 1;

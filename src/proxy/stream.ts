@@ -98,18 +98,24 @@ const BODY_CAP = 32 << 20; // upstream JSON bodies beyond this are treated as fa
 export async function readBody(res: Response): Promise<{ text: string | null; error: string | null }> {
   if (!res.body) return { text: null, error: "upstream returned an empty body" };
   const reader = res.body.getReader();
-  const dec = new TextDecoder();
-  let text = "";
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
   try {
     for (;;) {
       const n = await reader.read();
       if (n.done) break;
-      text += dec.decode(n.value, { stream: true });
-      if (text.length > BODY_CAP) return { text: null, error: `upstream body exceeds ${BODY_CAP} bytes` };
+      chunks.push(n.value);
+      bytes += n.value.byteLength;
+      if (bytes > BODY_CAP) {
+        reader.cancel().catch(() => {});
+        return { text: null, error: "body too large" };
+      }
     }
   } catch (e) {
     return { text: null, error: e instanceof Error ? e.message : "upstream connection reset" };
   }
+  if (bytes === 0) return { text: null, error: "upstream returned an empty body" };
+  const text = Buffer.concat(chunks as unknown as Buffer[]).toString("utf-8");
   if (!text) return { text: null, error: "upstream returned an empty body" };
   return { text, error: null };
 }
@@ -125,6 +131,7 @@ export async function takeHead(
   stream: boolean,
   onMidstreamFail?: (message: string) => void,
   firstByteMs: number = STREAM_IDLE_MS,
+  controller?: AbortController,
 ): Promise<{ res: Response; error: string | null }> {
   const reader = res.body!.getReader();
   let first: Chunk;
@@ -133,10 +140,15 @@ export async function takeHead(
     first = await Promise.race([
       reader.read(),
       new Promise<never>((_, rej) => {
-        timer = setTimeout(() => rej(new Error(`no first byte within ${firstByteMs}ms`)), firstByteMs);
+        timer = setTimeout(() => {
+          try { controller?.abort(new Error(`no first byte within ${firstByteMs}ms`)); } catch {}
+          rej(new Error(`no first byte within ${firstByteMs}ms`));
+        }, firstByteMs);
       }),
     ]);
   } catch (e) {
+    reader.cancel().catch(() => {});
+    try { controller?.abort(e instanceof Error ? e : new Error(String(e))); } catch {}
     return { res, error: e instanceof Error ? e.message : "upstream connection reset" };
   } finally {
     clearTimeout(timer);
@@ -185,7 +197,7 @@ export async function takeHead(
 /** SSE scanner that lifts `usage` out of chat chunks without touching bytes. */
 export function scanUsage(onUsage: (u: Record<string, number>) => void): TransformStream<Uint8Array, Uint8Array> {
   const dec = new TextDecoder();
-  let buf = "";
+  let pending: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
   const grab = (raw: string) => {
     if (!raw || raw === "[DONE]") return;
     try {
@@ -197,8 +209,15 @@ export function scanUsage(onUsage: (u: Record<string, number>) => void): Transfo
   };
   return new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, c) {
-      buf += dec.decode(chunk, { stream: true });
-      if (buf.length > STREAM_BUF_CAP) {
+      let combined: Uint8Array<ArrayBufferLike>;
+      if (pending.length) {
+        combined = new Uint8Array(pending.length + chunk.length);
+        combined.set(pending, 0);
+        combined.set(chunk, pending.length);
+      } else {
+        combined = chunk;
+      }
+      if (combined.byteLength > STREAM_BUF_CAP) {
         c.enqueue(
           ENC.encode(
             `data: ${JSON.stringify({ error: { message: `upstream buffer exceeds ${STREAM_BUF_CAP} bytes`, type: "server_error", code: "too_large" } })}\n\n`,
@@ -207,19 +226,36 @@ export function scanUsage(onUsage: (u: Record<string, number>) => void): Transfo
         c.error(new Error(`upstream buffer exceeds ${STREAM_BUF_CAP} bytes`));
         return;
       }
-      for (let i = buf.indexOf("\n"); i >= 0; i = buf.indexOf("\n")) {
-        const line = buf.slice(0, i).trim();
-        buf = buf.slice(i + 1);
+      // binary \n scan (10) over combined bytes, decode each line slice only once
+      let start = 0;
+      for (let i = 0; i < combined.length; i++) {
+        if (combined[i] !== 10) continue; // \n
+        const line = dec.decode(combined.subarray(start, i)).trim();
+        start = i + 1;
         if (line.startsWith("data:")) grab(line.slice(5).trim());
+      }
+      pending = start === 0 ? combined : start < combined.length ? combined.slice(start) : new Uint8Array(0);
+      // if we emitted lines, pending is the incomplete tail; already checked cap above,
+      // but a tail that alone exceeds cap without newline should still error next chunk
+      if (pending.byteLength > STREAM_BUF_CAP) {
+        c.enqueue(
+          ENC.encode(
+            `data: ${JSON.stringify({ error: { message: `upstream buffer exceeds ${STREAM_BUF_CAP} bytes`, type: "server_error", code: "too_large" } })}\n\n`,
+          ),
+        );
+        c.error(new Error(`upstream buffer exceeds ${STREAM_BUF_CAP} bytes`));
+        return;
       }
       c.enqueue(chunk);
     },
     flush() {
-      const tail = (buf + dec.decode()).trim();
+      if (!pending.length) return;
+      const tail = dec.decode(pending).trim();
       if (tail.startsWith("data:")) grab(tail.slice(5).trim());
     },
   });
 }
+
 
 /** Fire a callback exactly once when the body is consumed or abandoned. */
 export function endMark(body: ReadableStream<Uint8Array>, onEnd: () => void): ReadableStream<Uint8Array> {

@@ -69,12 +69,13 @@ const stub = Bun.serve({
 });
 
 beforeAll(() => {
+  process.env.TROY_ALLOW_LOOPBACK = "1";
   stubUrl = stub.url.toString();
 });
 afterAll(() => {
+  delete process.env.TROY_ALLOW_LOOPBACK;
   stub.stop(true);
 });
-
 function makeDeps(overrides?: Partial<ChatDeps>): { store: Store; cd: CooldownStore; deps: ChatDeps; logs: LogRow[] } {
   const store = new Store(":memory:");
   const cd = new CooldownStore();
@@ -310,6 +311,7 @@ describe("cooldown + preflight (integrated)", () => {
     src.success("c1", "m1");
     src.fail("c2", "m2", 402, "insufficient balance");
     for (let i = 0; i < 3; i++) src.fail("c3", "m3", 500, "boom", "prov/m3");
+    src.flushPending();
     const replayed = CooldownStore.replay(events);
     expect(replayed.isEligible("c1", "m1")).toBe(true);
     expect(replayed.isEligible("c2", "m2")).toBe(false);

@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
+import { cLog, panic, TAG } from "../logger";
 import type { Provider } from "../proxy/registry";
 import { runMigrations } from "./migrations";
-
 export interface Connection {
   id: string;
   provider: string;
@@ -95,7 +95,9 @@ export class Store {
       this.db.exec("PRAGMA journal_mode=WAL;");
     } catch (e) {
       try {
-        console.log(`  WAL unavailable — falling back to DELETE (${e instanceof Error ? e.message : String(e)})`);
+        cLog(TAG.STORE, {
+          msg: `WAL unavailable — falling back to DELETE (${e instanceof Error ? e.message : String(e)})`,
+        });
       } catch {}
       try {
         this.db.exec("PRAGMA journal_mode=DELETE;");
@@ -135,6 +137,10 @@ export class Store {
     return this.db
       .query("SELECT * FROM connections ORDER BY provider ASC, priority ASC")
       .all() as unknown as Connection[];
+  }
+
+  getConnectionById(id: string): Connection | undefined {
+    return this.db.query("SELECT * FROM connections WHERE id = ?").get(id) as unknown as Connection | undefined;
   }
 
   /** Providers that have at least one active key — one query, no N+1. */
@@ -407,7 +413,7 @@ export class Store {
         this.flushLogs();
       } catch (err) {
         try {
-          console.error("[troy] flushLogs panic", err instanceof Error ? (err.stack ?? err.message) : String(err));
+          panic(TAG.STORE, "flushLogs panic", err);
         } catch {}
       }
     }, intervalMs);
@@ -502,7 +508,33 @@ export class Store {
     }
   }
 
+  appendStateEventsBatch(events: StateEvent[]): void {
+    if (events.length === 0) return;
+    const stmt = this.db.query(
+      "INSERT INTO state_events (ts, kind, conn_id, key, circuit_key, status, reason, until_ms, backoff_level) VALUES (?,?,?,?,?,?,?,?,?)",
+    );
+    this.db.transaction(() => {
+      for (const e of events)
+        stmt.run(
+          e.ts,
+          e.kind,
+          e.conn_id,
+          e.key ?? null,
+          e.circuit_key ?? null,
+          e.status ?? null,
+          e.reason ?? null,
+          e.until_ms ?? null,
+          e.backoff_level ?? null,
+        );
+    })();
+    if (!this.stateTrim || Date.now() - this.stateTrim > 3600_000) {
+      this.stateTrim = Date.now();
+      this.pruneStateEvents(86400_000);
+    }
+  }
+
   foldStateEvents(): StateEvent[] {
+    // flush any batched pending in cooldown is the caller's job; here we just read what's durable
     return this.db.query("SELECT * FROM state_events ORDER BY id ASC").all() as StateEvent[];
   }
 
