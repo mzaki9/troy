@@ -1,5 +1,8 @@
-import { type ChatDeps, handleChat } from "../proxy/route";
+import { panic, TAG } from "../logger";
+// ponytail: inject handleChat via ChatHandler when app wiring allows — type break done in types.ts
+import { handleChat } from "../proxy/route";
 import { sseTranslate } from "../proxy/stream";
+import type { ChatDeps } from "../proxy/types";
 
 /**
  * /v1/responses bridge (Codex CLI, Feb 2026+ removed `wire_api = "chat"`).
@@ -429,15 +432,17 @@ export async function handleResponses(body: Record<string, unknown>, deps: ChatD
       headers,
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    const stack = err instanceof Error ? err.stack : undefined;
-    try {
-      console.error(`[panic] handleResponses requestId=${deps.requestId ?? "-"} ${msg}`, stack ?? "");
-    } catch {}
+    panic(TAG.PROVIDER, "handleResponses", err, { requestId: deps.requestId ?? "-" });
     const headers: Record<string, string> = { "content-type": "application/json", "access-control-allow-origin": "*" };
     if (deps.requestId) headers["x-request-id"] = deps.requestId;
     return new Response(
-      JSON.stringify({ error: { message: `panic: ${msg.slice(0, 200)}`, type: "troy_panic", code: "internal" } }),
+      JSON.stringify({
+        error: {
+          message: `panic: ${(err instanceof Error ? err.message : String(err)).slice(0, 200)}`,
+          type: "troy_panic",
+          code: "internal",
+        },
+      }),
       {
         status: 500,
         headers,

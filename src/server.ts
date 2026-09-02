@@ -1,8 +1,10 @@
 import { mkdirSync } from "node:fs";
 import { buildTroyServer } from "./app";
 import { DEFAULT_DASHBOARD_PASS } from "./dash/auth";
+import { cLog, panic, TAG, trace } from "./logger";
 import { startModelsDevRefresh } from "./modelsdev";
 import { CooldownStore } from "./proxy/cooldown";
+import type { StateEvent } from "./store/db";
 import { Store } from "./store/db";
 
 const PORT = Number(process.env.PORT ?? 31337);
@@ -15,8 +17,11 @@ store.startLogFlush(2000);
 // rrChain persisted in kv so round-robin rotation survives restarts
 const cooldowns = CooldownStore.replay(
   store.foldStateEvents(),
-  { append: (e) => store.appendStateEvent(e) },
-  (line) => console.log(`  ${line}`),
+  {
+    append: (e: StateEvent) => store.appendStateEvent(e),
+    appendBatch: (es: StateEvent[]) => store.appendStateEventsBatch(es),
+  } as unknown as { append: (e: StateEvent) => void },
+  (line) => trace(TAG.PROXY, line),
   { get: (n) => store.getNextChainStart(n), set: (n, v) => store.setNextChainStart(n, v) },
 );
 
@@ -31,19 +36,19 @@ const { server, shutdown } = buildTroyServer({
   enableBackgroundTasks: true,
 });
 
-console.log(`troy → ${server.url}  proxy: ${server.url}v1  dashboard: ${server.url}`);
-startModelsDevRefresh((msg) => console.log(`  ${msg}`));
+cLog(TAG.SYSTEM, { msg: `troy → ${server.url}  proxy: ${server.url}v1  dashboard: ${server.url}` });
+startModelsDevRefresh((msg) => cLog(TAG.MODELSDEV, { msg }));
 if (!store.getDashPass()) {
-  console.log(
-    `  dashboard password: ${DEFAULT_DASHBOARD_PASS} (default — change it under Settings → Dashboard password)`,
-  );
+  cLog(TAG.AUTH, {
+    msg: `dashboard password: ${DEFAULT_DASHBOARD_PASS} (default — change it under Settings → Dashboard password)`,
+  });
 }
 
 let shuttingDown = false;
 function gracefulShutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log(`\n[shutdown] ${signal} received, draining...`);
+  cLog(TAG.SYSTEM, { msg: `[shutdown] ${signal} received, draining...` });
   try {
     shutdown();
   } catch {}
@@ -66,11 +71,11 @@ function gracefulShutdown(signal: string) {
     store.close();
   } catch {}
   setTimeout(() => {
-    console.log("[shutdown] complete");
+    cLog(TAG.SYSTEM, { msg: "[shutdown] complete" });
     process.exit(0);
   }, 500).unref?.();
   setTimeout(() => {
-    console.error("[shutdown] forced exit after 10s");
+    panic(TAG.SYSTEM, "forced exit after 10s", new Error("shutdown timeout"));
     process.exit(1);
   }, 10_000).unref?.();
 }

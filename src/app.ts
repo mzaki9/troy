@@ -10,6 +10,8 @@ import {
 } from "./dash/auth";
 import { modelsList, providerCatalog, stats } from "./dash/stats";
 import { clearDshPlugin, installDshPlugin } from "./dsh-plugin";
+import { assertPublicUrl } from "./lib/net";
+import { cLog, httpLog, trace as logTrace, panic, TAG } from "./logger";
 import { enrich, enrichmentStatus } from "./modelsdev";
 import { clearOmpPlugin, installOmpPlugin } from "./omp-plugin";
 import { installOpenCodePlugin } from "./opencode-plugin";
@@ -27,6 +29,14 @@ import {
 } from "./proxy/registry";
 import { authHeaders, buildBaseUrl, type ChatDeps, COMBO_STRATEGIES, handleChat } from "./proxy/route";
 import type { ApiAuth, DashPass, Store } from "./store/db";
+
+// ponytail: in-memory only; add persistent SQLite cache when multi-instance
+const PROVIDER_MODELS_TTL_MS = Number(process.env.PROVIDER_MODELS_TTL_MS ?? 300_000);
+const PROVIDER_MODELS_CACHE_MAX = 100;
+const providerModelsCache = new Map<
+  string,
+  { at: number; url: string; payload: { url: string; models: { id: string; name: string; thinking: boolean }[] } }
+>();
 
 export interface BuildOptions {
   store: Store;
@@ -72,52 +82,16 @@ function setSessionCookie(token: string, secure = false): string {
 function json(data: unknown, status = 200, extra?: Record<string, string>): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "content-type": "application/json", "access-control-allow-origin": "*", ...extra },
+    headers: { "content-type": "application/json", ...extra },
   });
 }
 
 const BODY_LIMIT_API = 1 << 20; // 1MB for /api
 const BODY_LIMIT_PROXY = 4 << 20; // 4MB for /v1 (images)
 
-function isPrivateHostname(hostname: string): boolean {
-  const h = hostname.toLowerCase();
-  if (h === "localhost" || h === "::1" || h === "0.0.0.0") return true;
-  // IPv4
-  const v4 = h.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
-  if (v4) {
-    const [a, b] = [Number(v4[1]), Number(v4[2])];
-    if (a === 10) return true;
-    if (a === 127) return true;
-    if (a === 169 && b === 254) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 0) return true;
-  }
-  // IPv6 private
-  if (h.startsWith("fc") || h.startsWith("fd") || h === "::" || h.startsWith("::ffff:")) {
-    // fc00::/7, ::ffff: private mapped
-    if (h.startsWith("fc") || h.startsWith("fd")) return true;
-  }
-  if (h.endsWith(".localhost")) return true;
-  return false;
-}
-
-function assertPublicUrl(urlStr: string): void {
-  let u: URL;
-  try {
-    u = new URL(urlStr);
-  } catch {
-    throw new Error("invalid url");
-  }
-  if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("url must be http(s)");
-  const h = u.hostname.toLowerCase();
-  const isLoopback = h === "127.0.0.1" || h === "localhost" || h === "::1" || h === "0.0.0.0";
-  if (!isLoopback && isPrivateHostname(h)) throw new Error("private address blocked");
-}
-
 function readBody(request: Request): Promise<unknown> {
   const len = Number(request.headers.get("content-length") ?? 0);
-  const isProxy = request.url.includes("/v1/");
+  const isProxy = new URL(request.url).pathname.startsWith("/v1/");
   const limit = isProxy ? BODY_LIMIT_PROXY : BODY_LIMIT_API;
   if (len > limit) return Promise.resolve(null);
   if (request.signal?.aborted) return Promise.resolve(null);
@@ -180,9 +154,7 @@ function cors(request: Request, url?: URL): Response {
 export function buildTroyServer(opts: BuildOptions): TroyServer {
   const { store, cooldowns, port = 0, trace: traceEnabled = false, enableBackgroundTasks = true } = opts;
 
-  const trace = (line: string) => {
-    if (traceEnabled) console.log(`  ${line}`);
-  };
+  const trace = (line: string) => logTrace(TAG.PROXY, line);
 
   // load user-defined providers into the registry
   for (const p of store.listCustomProviders()) {
@@ -211,9 +183,7 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
         const now = Date.now();
         for (const [token, exp] of sessions) if (exp < now) sessions.delete(token);
       } catch (err) {
-        try {
-          console.error("[troy] sessionSweep panic", err instanceof Error ? (err.stack ?? err.message) : String(err));
-        } catch {}
+        panic(TAG.AUTH, "sessionSweep panic", err);
       }
     }, 3_600_000);
     sessionSweep.unref?.();
@@ -222,9 +192,13 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
   // login rate limiter: 5/min/IP
   const loginAttempts = new Map<string, { count: number; first: number; blockedUntil?: number }>();
   function clientIp(req: Request): string {
-    return (
-      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip")?.trim() || "127.0.0.1"
-    );
+    // ponytail: add server.requestIP when Bun server handle available; trust-proxy gate prevents spoof
+    const trustProxy = process.env.TROY_TRUST_PROXY === "1";
+    if (trustProxy) {
+      const fwd = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+      if (fwd) return fwd;
+    }
+    return req.headers.get("x-real-ip")?.trim() || "127.0.0.1";
   }
   function isLoginAllowed(ip: string): boolean {
     const now = Date.now();
@@ -377,9 +351,7 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
       try {
         if (Date.now() - lastActivity > 30_000) Bun.gc(true);
       } catch (err) {
-        try {
-          console.error("[troy] gc panic", err instanceof Error ? (err.stack ?? err.message) : String(err));
-        } catch {}
+        panic(TAG.SYSTEM, "gc panic", err);
       }
     }, 60_000);
     gcTimer.unref?.();
@@ -419,28 +391,16 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
           return res;
         }
       };
-      const logStructured = (status: number, error?: string) => {
-        const latency = Date.now() - start;
-        if (traceEnabled || status >= 400) {
-          try {
-            const url = new URL(request.url);
-            console.log(
-              JSON.stringify({
-                tag: "[GIN]",
-                requestId,
-                status,
-                latency,
-                ip: clientIp(request),
-                method: request.method,
-                path: url.pathname,
-                ...(error ? { error } : {}),
-              }),
-            );
-          } catch {
-            /* logging must never throw */
-          }
-        }
-      };
+      const logStructured = (status: number, error?: string) =>
+        httpLog({
+          requestId,
+          status,
+          latency: Date.now() - start,
+          ip: clientIp(request),
+          method: request.method,
+          path: new URL(request.url).pathname,
+          ...(error ? { error } : {}),
+        });
       // early body limit check without reading (Step 6)
       const clen = Number(request.headers.get("content-length") ?? 0);
       const isProxy = request.url.includes("/v1/");
@@ -472,7 +432,7 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
           return out;
         }
 
-        if ((path === "/healthz" || path === "/api/healthz") && request.method === "GET") {
+        if ((path === "/healthz" || path === "/api/healthz" || path === "/api/health") && request.method === "GET") {
           const res = json({ ok: true, ts: new Date().toISOString() }, 200, { "x-request-id": requestId });
           logStructured(200);
           return res;
@@ -532,10 +492,41 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
           logStructured(200);
           return res;
         }
-        if (path.startsWith("/api/") && !authed(request)) {
-          const res = json({ error: "login required" }, 401, { "x-request-id": requestId });
-          logStructured(401, "login required");
-          return res;
+        function hasValidApiKey(req: Request): boolean {
+          if (apiAuth.on !== 1) return false;
+          const g = extractApiKey(req);
+          return !!g && safeEqual(g, apiAuth.key);
+        }
+        function isPublic(p: string, m: string): boolean {
+          return (
+            (m === "GET" &&
+              (p === "/healthz" || p === "/api/healthz" || p === "/api/health" || p === "/api/session")) ||
+            (m === "POST" && (p === "/api/login" || p === "/api/logout"))
+          );
+        }
+        function isReadOnlyModel(p: string, m: string): boolean {
+          return (
+            m === "GET" &&
+            (p === "/api/models" ||
+              p === "/v1/models" ||
+              p.startsWith("/v1/models/") ||
+              p === "/api/providers" ||
+              p === "/api/modelsdev/status" ||
+              (p.startsWith("/api/providers/") && p.endsWith("/models")))
+          );
+        }
+        if (path.startsWith("/api/") && !isPublic(path, request.method)) {
+          if (isReadOnlyModel(path, request.method)) {
+            if (!authed(request) && !hasValidApiKey(request)) {
+              logStructured(401, "login required");
+              return withId(json({ error: "login required" }, 401, { "x-request-id": requestId }));
+            }
+          } else {
+            if (!authed(request)) {
+              logStructured(401, "login required");
+              return withId(json({ error: "login required" }, 401, { "x-request-id": requestId }));
+            }
+          }
         }
 
         // global per-IP rate limiter for /v1/* (Step 5)
@@ -558,24 +549,21 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
           }
         }
 
-        // troy's own api key — every /v1 request must carry it while auth is on
-        if (isV1Path(path, request.method) && apiAuth.on === 1) {
-          const given = extractApiKey(request);
-          if (!given || !safeEqual(given, apiAuth.key)) {
-            const res = json(
-              {
-                error: {
-                  message: "missing or invalid troy api key — send Authorization: Bearer <key> or x-api-key",
-                  type: "invalid_request_error",
-                  code: "invalid_api_key",
-                },
+        // troy's own api key — /v1 needs key OR session when auth is on
+        if (isV1Path(path, request.method) && apiAuth.on === 1 && !hasValidApiKey(request) && !authed(request)) {
+          const res = json(
+            {
+              error: {
+                message: "missing or invalid troy api key — send Authorization: Bearer <key> or x-api-key",
+                type: "invalid_request_error",
+                code: "invalid_api_key",
               },
-              401,
-              { "www-authenticate": "Bearer", "x-request-id": requestId },
-            );
-            logStructured(401, "invalid api key");
-            return res;
-          }
+            },
+            401,
+            { "www-authenticate": "Bearer", "x-request-id": requestId },
+          );
+          logStructured(401, "invalid api key");
+          return res;
         }
 
         if (path === "/api/install-opencode-plugin" && request.method === "POST") {
@@ -809,6 +797,14 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
             logStructured(400, "blocked private address");
             return res;
           }
+          const cacheKey = `${id}|${modelsUrl}`;
+          const cached = providerModelsCache.get(cacheKey);
+          if (cached && Date.now() - cached.at < PROVIDER_MODELS_TTL_MS) {
+            logTrace(TAG.PROVIDER, `cache hit ${id}`);
+            const res = json(cached.payload, 200, { "x-request-id": requestId, "x-cache": "hit" });
+            logStructured(200);
+            return res;
+          }
           try {
             const upstreamRes = await fetch(modelsUrl, {
               headers,
@@ -816,6 +812,16 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
               redirect: "manual",
             });
             if (!upstreamRes.ok) {
+              if (cached) {
+                cLog(TAG.PROVIDER, {
+                  msg: "stale cache fallback",
+                  provider: id,
+                  error: `upstream ${upstreamRes.status}`,
+                });
+                const res = json(cached.payload, 200, { "x-request-id": requestId, "x-cache": "stale" });
+                logStructured(200);
+                return res;
+              }
               const text = await upstreamRes.text().catch(() => "");
               let detail: string | undefined;
               try {
@@ -832,21 +838,33 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
               return res;
             }
             const data = (await upstreamRes.json()) as { data?: { id: string; name?: string }[] };
-            const res = json(
-              {
-                url: modelsUrl,
-                models: (data.data ?? []).map((m) => ({
-                  id: m.id,
-                  name: m.name ?? m.id,
-                  thinking: enrich(m.id).reasoning,
-                })),
-              },
-              200,
-              { "x-request-id": requestId },
-            );
+            const payload = {
+              url: modelsUrl,
+              models: (data.data ?? []).map((m) => ({
+                id: m.id,
+                name: m.name ?? m.id,
+                thinking: enrich(m.id).reasoning,
+              })),
+            };
+            providerModelsCache.set(cacheKey, { at: Date.now(), url: modelsUrl, payload });
+            if (providerModelsCache.size > PROVIDER_MODELS_CACHE_MAX) {
+              const first = providerModelsCache.keys().next().value;
+              if (first) providerModelsCache.delete(first);
+            }
+            const res = json(payload, 200, { "x-request-id": requestId });
             logStructured(200);
             return res;
           } catch (e: unknown) {
+            if (cached) {
+              cLog(TAG.PROVIDER, {
+                msg: "stale cache fallback",
+                provider: id,
+                error: e instanceof Error ? e.message : String(e),
+              });
+              const res = json(cached.payload, 200, { "x-request-id": requestId, "x-cache": "stale" });
+              logStructured(200);
+              return res;
+            }
             const res = json({ error: e instanceof Error ? e.message : String(e), url: modelsUrl, models: [] }, 502, {
               "x-request-id": requestId,
             });
@@ -1161,10 +1179,7 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
         return res;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        const stack = err instanceof Error ? err.stack : undefined;
-        try {
-          console.error(`[panic] requestId=${requestId} ${msg}`, stack ?? "");
-        } catch {}
+        panic(TAG.PROXY, "handleChat", err, { requestId });
         const res = json(
           { error: { message: `panic: ${msg.slice(0, 200)}`, type: "troy_panic", code: "internal" } },
           500,

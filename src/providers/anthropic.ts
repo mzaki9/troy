@@ -1,5 +1,8 @@
-import { type ChatDeps, handleChat } from "../proxy/route";
+import { panic, TAG } from "../logger";
+// ponytail: inject handleChat via ChatHandler when app wiring allows — type break done in types.ts
+import { handleChat } from "../proxy/route";
 import { sseTranslate } from "../proxy/stream";
+import type { ChatDeps } from "../proxy/types";
 
 /**
  * /v1/messages bridge (Anthropic wire format — Claude Code & friends).
@@ -376,15 +379,17 @@ export async function handleMessages(body: Record<string, unknown>, deps: ChatDe
     if (deps.requestId) headers.set("x-request-id", deps.requestId);
     return new Response(res.body!.pipeThrough(stream), { status: 200, headers });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    const stack = err instanceof Error ? err.stack : undefined;
-    try {
-      console.error(`[panic] handleMessages requestId=${deps.requestId ?? "-"} ${msg}`, stack ?? "");
-    } catch {}
+    panic(TAG.PROVIDER, "handleMessages", err, { requestId: deps.requestId ?? "-" });
     const headers: Record<string, string> = { "content-type": "application/json", "access-control-allow-origin": "*" };
     if (deps.requestId) headers["x-request-id"] = deps.requestId;
     return new Response(
-      JSON.stringify({ type: "error", error: { type: "api_error", message: `panic: ${msg.slice(0, 200)}` } }),
+      JSON.stringify({
+        type: "error",
+        error: {
+          type: "api_error",
+          message: `panic: ${(err instanceof Error ? err.message : String(err)).slice(0, 200)}`,
+        },
+      }),
       {
         status: 500,
         headers,

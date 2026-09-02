@@ -16,10 +16,9 @@
  * the background and fail open to the previous snapshot.
  */
 
+import { cLog, TAG } from "./logger";
 import seed from "./modelsdev-seed.json";
 import { isReasoningModel } from "./providers/reasoning";
-
-// ---- shapes -----------------------------------------------------------------
 
 export interface CanonicalModel {
   id: string;
@@ -146,7 +145,7 @@ export interface SyncResult {
 
 /** One sync attempt per payload. Each swaps atomically on success, keeps the old on failure. */
 export async function refreshOnce(
-  log: (msg: string) => void = console.log,
+  log: (msg: string) => void = (msg) => cLog(TAG.MODELSDEV, { msg }),
   fetchImpl: (input: string, init?: RequestInit) => Promise<Response> = fetch,
 ): Promise<SyncResult> {
   const logs: string[] = [];
@@ -187,13 +186,13 @@ export async function refreshOnce(
   return { canonical: c, provider: p };
 }
 
+// biome-ignore lint/correctness/noUnusedVariables: guard prevents double startModelsDevRefresh
 let started = false;
 let lastSyncAt: string | undefined;
 let lastSyncCounts = { canonicalEntries: Object.keys(seed as ModelsDevCatalog).length, providerEntries: 0 };
 
 /** Refresh shortly after boot, then daily. Failures keep the previous snapshots. */
-export function startModelsDevRefresh(log: (msg: string) => void = console.log): void {
-  if (started) return;
+export function startModelsDevRefresh(log: (msg: string) => void = (msg) => cLog(TAG.MODELSDEV, { msg })): void {
   started = true;
   const timer = setInterval(() => void refreshOnce(log), REFRESH_MS);
   timer.unref?.();
