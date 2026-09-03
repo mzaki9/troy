@@ -1,0 +1,25 @@
+services:
+  troy:
+    build: .
+    image: troy-proxy:latest
+    ports:
+      - "31337:31337"
+    volumes:
+      - troy-data:/data
+    environment:
+      PORT: 31337
+      TROY_DATA: /data
+      # TROY_TRACE: 0
+      # TROY_MAX_INFLIGHT: 10
+      # TROY_STREAM_IDLE_MS: 60000
+      # TROY_UPSTREAM_TIMEOUT_MS: 300000
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:31337/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  troy-data:

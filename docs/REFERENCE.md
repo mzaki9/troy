@@ -14,6 +14,9 @@
 | `TROY_CORS_ORIGINS` | `url.origin` | extra allowed `Origin` for dashboard (`*` otherwise) |
 | `TROY_ENRICH` | `limits,modalities` | models.dev enrichment layers; `""` disables |
 
+In Docker (`docker-compose.yml`) `TROY_DATA` is `/data` (named volume `troy-data`); every other
+var passes through unchanged via `environment:` / `docker run -e`.
+
 ## Proxy endpoints
 
 | Method | Path | Purpose |

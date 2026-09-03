@@ -1,0 +1,9 @@
+node_modules/
+data/
+dashboard/dist/
+.git/
+*.log
+.env
+learn-docs/
+test/
+docs/

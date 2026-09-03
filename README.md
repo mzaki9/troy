@@ -84,6 +84,21 @@ TROY_DATA=~/.troy troy            # different data dir
 TROY_TRACE=1 troy                 # play-by-play routing trace in terminal
 ```
 
+Or run it in Docker (small multi-stage image, `oven/bun-alpine`):
+
+```bash
+docker compose up -d --build     # dashboard → http://localhost:31337
+docker logs -f troy-troy-1       # grab the default password on first boot
+
+# plain docker, same thing:
+docker build -t troy-proxy .
+docker run -d -p 31337:31337 -v troy-data:/data --name troy troy-proxy
+```
+
+The SQLite DB lives in the `troy-data` volume (`TROY_DATA=/data` in-container).
+Pass any `TROY_*` env var from [Configuration](#️-configuration) through
+`docker run -e` / compose `environment:` the same way.
+
 ---
 
 ## 🎯 Combos & Failover — the flagship
