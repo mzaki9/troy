@@ -10,12 +10,13 @@ afterEach(() => {
 
 describe("opencode plugin (integrated via FS + fetch mock)", () => {
   test("render, install, and dir resolution", () => {
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: intentional fixture with literal ${x}
     const key = 'sk-"troy"\\${x}';
     expect(renderOpenCodePlugin("http://localhost:31337", key)).toContain(`const API_KEY = ${JSON.stringify(key)};`);
     const dir = join("/tmp/opencode/troy-plugin-test", `${Date.now()}-${Math.random().toString(36).slice(2)}`);
     const first = installOpenCodePlugin({ baseUrl: "http://localhost:31337/", apiKey: "sk-troy-1", dir });
     expect(readFileSync(first.path, "utf8")).toBe(renderOpenCodePlugin("http://localhost:31337/", "sk-troy-1"));
-    expect(openCodePluginDir({ XDG_CONFIG_HOME: "/xdg" })).toBe("/xdg/opencode/plugins");
+    expect(openCodePluginDir({ XDG_CONFIG_HOME: "/xdg" })).toBe(join("/xdg", "opencode/plugins"));
     expect(() => openCodePluginDir({})).toThrow("XDG_CONFIG_HOME");
   });
 

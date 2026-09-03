@@ -13,6 +13,7 @@ function scratch(name: string) {
 
 describe("dsh plugin (integrated via FS)", () => {
   test("render, home, install idempotent and preserves foreign content", () => {
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: intentional fixture with literal ${x}
     const key = 'sk-"troy"\\${x}';
     const out = renderDshPlugin("http://localhost:31337", key);
     expect(out).toContain(`const API_KEY = ${JSON.stringify(key)};`);

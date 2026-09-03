@@ -27,7 +27,14 @@ import {
   registerCustomProvider,
   unregisterCustomProvider,
 } from "./proxy/registry";
-import { authHeaders, buildBaseUrl, type ChatDeps, COMBO_STRATEGIES, handleChat } from "./proxy/route";
+import {
+  authHeaders,
+  buildBaseUrl,
+  type ChatDeps,
+  COMBO_STRATEGIES,
+  extractOpencodeSession,
+  handleChat,
+} from "./proxy/route";
 import type { ApiAuth, DashPass, Store } from "./store/db";
 
 // ponytail: in-memory only; add persistent SQLite cache when multi-instance
@@ -145,7 +152,8 @@ function cors(request: Request, url?: URL): Response {
     headers: {
       "access-control-allow-origin": origin,
       "access-control-allow-methods": "GET,POST,PUT,DELETE,OPTIONS",
-      "access-control-allow-headers": "content-type,authorization,x-api-key",
+      "access-control-allow-headers":
+        "content-type,authorization,x-api-key,x-opencode-session,x-session-affinity,x-session-id,x-request-id",
       "access-control-max-age": "86400",
     },
   });
@@ -295,6 +303,7 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
       ponytailLevel: settings.ponytail_level,
       signal: request.signal,
       requestId: requestId ?? "",
+      opencodeSession: extractOpencodeSession(request),
       onLog: (row) => store.logRequest(row),
       onTrace: traceEnabled ? trace : undefined,
     };

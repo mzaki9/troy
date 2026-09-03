@@ -25,6 +25,8 @@ export interface ChatDeps {
   ponytailLevel: string;
   signal?: AbortSignal;
   requestId?: string;
+  /** Session-affinity value for opencode/opencode-go prompt-cache routing (x-opencode-session). */
+  opencodeSession?: string;
   onLog: (row: LogRow) => void;
   /** optional terminal trace for routing decisions (TROY_TRACE=1) */
   onTrace?: (line: string) => void;

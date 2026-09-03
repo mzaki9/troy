@@ -141,14 +141,18 @@ export async function takeHead(
       reader.read(),
       new Promise<never>((_, rej) => {
         timer = setTimeout(() => {
-          try { controller?.abort(new Error(`no first byte within ${firstByteMs}ms`)); } catch {}
+          try {
+            controller?.abort(new Error(`no first byte within ${firstByteMs}ms`));
+          } catch {}
           rej(new Error(`no first byte within ${firstByteMs}ms`));
         }, firstByteMs);
       }),
     ]);
   } catch (e) {
     reader.cancel().catch(() => {});
-    try { controller?.abort(e instanceof Error ? e : new Error(String(e))); } catch {}
+    try {
+      controller?.abort(e instanceof Error ? e : new Error(String(e)));
+    } catch {}
     return { res, error: e instanceof Error ? e.message : "upstream connection reset" };
   } finally {
     clearTimeout(timer);
@@ -255,7 +259,6 @@ export function scanUsage(onUsage: (u: Record<string, number>) => void): Transfo
     },
   });
 }
-
 
 /** Fire a callback exactly once when the body is consumed or abandoned. */
 export function endMark(body: ReadableStream<Uint8Array>, onEnd: () => void): ReadableStream<Uint8Array> {

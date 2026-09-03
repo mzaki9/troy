@@ -14,11 +14,12 @@ function scratch(name: string) {
 
 describe("omp extension (integrated via FS)", () => {
   test("render, dir resolution, install idempotent and preserves foreign extensions", () => {
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: intentional fixture with literal ${x}
     const key = 'sk-"troy"\\${x}';
     const out = renderOmpPlugin("http://localhost:31337", key);
     expect(out).toContain(`const API_KEY = ${JSON.stringify(key)};`);
     expect(ompAgentDir({ PI_CODING_AGENT_DIR: "/pi", HOME: "/home/u" })).toBe("/pi");
-    expect(ompAgentDir({ HOME: "/home/u" })).toBe("/home/u/.omp/agent");
+    expect(ompAgentDir({ HOME: "/home/u" })).toBe(join("/home/u", ".omp/agent"));
     expect(() => ompAgentDir({})).toThrow("PI_CODING_AGENT_DIR");
 
     const agentDir = scratch("install");

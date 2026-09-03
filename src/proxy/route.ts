@@ -134,12 +134,34 @@ export function authHeaders(def: Provider, conn: Connection): Record<string, str
   return headers;
 }
 
+/** Providers that support opencode session-affinity prompt-cache routing. Scoped
+ *  to opencode zen + opencode-go only — no other upstream gets this header. */
+export const OPENCODE_SESSION_PROVIDERS = new Set(["opencode", "opencode-go"]);
+
+/** Pick the session value to send as x-opencode-session: prefer the native
+ *  header, fall back to OpenCode's generic affinity headers. Sanitized to a
+ *  single header-safe line, clamped to 128 chars. */
+export function extractOpencodeSession(request: Request): string | undefined {
+  const raw =
+    request.headers.get("x-opencode-session")?.trim() ||
+    request.headers.get("x-session-affinity")?.trim() ||
+    request.headers.get("x-session-id")?.trim() ||
+    undefined;
+  if (!raw) return undefined;
+  const clean = raw
+    .replace(/[\r\n]+/g, "")
+    .trim()
+    .slice(0, 128);
+  return clean || undefined;
+}
+
 async function forward(
   bodyJson: string,
   conn: Connection,
   def: Provider,
   signal?: AbortSignal,
   wantsStream = false,
+  opencodeSession?: string,
 ): Promise<Response> {
   const headers: Record<string, string> = {
     "content-type": "application/json",
@@ -148,6 +170,7 @@ async function forward(
   };
   if (wantsStream || def.id === "command-code" || def.id === "freebuff") headers.accept = "text/event-stream";
   if (def.id === "command-code") headers["x-session-id"] = crypto.randomUUID();
+  if (opencodeSession && OPENCODE_SESSION_PROVIDERS.has(def.id)) headers["x-opencode-session"] = opencodeSession;
   // explicit content-length for replay determinism (Bun sets it, but be explicit)
   headers["content-length"] = String(Buffer.byteLength(bodyJson, "utf8"));
   const target = buildBaseUrl(def, conn);
@@ -408,7 +431,7 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
                 );
             }
             res = await withDeadline(
-              forward(fbJson ?? bodyJson, conn, def, ac.signal, effBody.stream === true),
+              forward(fbJson ?? bodyJson, conn, def, ac.signal, effBody.stream === true, deps.opencodeSession),
               ttfb,
               ac,
             );
