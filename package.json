@@ -1,6 +1,6 @@
 {
   "name": "troy-proxy",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Local LLM API proxy with multi-provider routing, combos, cooldowns and a usage dashboard",
   "license": "GPL-3.0-or-later",
   "author": "Muhammad Zaki <tuanzaki9@gmail.com>",
