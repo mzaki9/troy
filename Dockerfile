@@ -32,6 +32,6 @@ USER bun
 VOLUME /data
 EXPOSE 31337
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget -qO- http://127.0.0.1:31337/healthz | grep -q '"ok":true'
+  CMD wget -qO- "http://127.0.0.1:${PORT:-31337}/healthz" | grep -q '"ok":true'
 # exec form so SIGTERM reaches Bun (graceful shutdown in src/server.ts)
 CMD ["bun", "--smol", "src/server.ts"]

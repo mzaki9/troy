@@ -15,7 +15,7 @@ services:
       # TROY_UPSTREAM_TIMEOUT_MS: 300000
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:31337/healthz"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:$${PORT:-31337}/healthz | grep -q ok"]
       interval: 30s
       timeout: 3s
       retries: 3

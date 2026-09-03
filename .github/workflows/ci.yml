@@ -34,3 +34,16 @@ jobs:
 
       - name: Build
         run: bun run build
+
+  docker:
+    name: docker build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t troy-proxy:ci .
+
+      - name: Validate compose
+        run: docker compose config > /dev/null
