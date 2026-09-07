@@ -9,7 +9,6 @@ import {
   ensureFreebuffRun,
   ensureFreebuffSession,
   freebuffJsonReply,
-  invalidateFreebuff,
   invalidateFreebuffRun,
   invalidateFreebuffSession,
   wrapFreebuff,
@@ -39,9 +38,12 @@ import type { ChatDeps } from "./types";
 const MAX_INFLIGHT_PER_CONN = Math.max(1, Number(process.env.TROY_MAX_INFLIGHT ?? 10));
 const inflight = new Map<string, number>();
 
-// hoisted hot-path constant: no per-request RegExp allocation
+// hoisted hot-path constants: no per-request RegExp allocation
 const RE_PLACEHOLDER = /\{(\w+)\}/g;
-
+// chat-200 terminal shapes ride HTTP 200 with a JSON status body (session-create
+// mirror) — freebuffJsonReply would emit them as an empty completion otherwise
+const RE_FB_TERMINAL =
+  /"status"\s*:\s*"(queued|banned|model_locked|model_unavailable|rate_limited|spend_limited|ip_capped)"/;
 export const COMBO_STRATEGIES = new Set(["fallback", "random", "round-robin"]);
 
 const now = () => Date.now();
@@ -480,9 +482,29 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
             }
             // freebuff always streams upstream — buffer SSE into a chat.completion JSON body
             if (fb && !stream) {
+              const fbText = await res.text().catch(() => "");
+              const fbTerm = RE_FB_TERMINAL.exec(fbText)?.[1];
+              if (fbTerm) {
+                // chat-200 terminal shape (session-create mirror): cooldown + failover, never empty 200
+                let fbRetry: number | undefined;
+                try {
+                  const p: unknown = JSON.parse(fbText);
+                  if (p && typeof p === "object" && typeof (p as Record<string, unknown>).retryAfterMs === "number")
+                    fbRetry = (p as Record<string, unknown>).retryAfterMs as number;
+                } catch {
+                  /* non-JSON body */
+                }
+                const fbMsg = `freebuff ${fbTerm} — ${fbText}`.slice(0, 300);
+                deps.cooldowns.fail(conn.id, model, 0, fbMsg, circuitKey, fbRetry, deps.requestId);
+                tryAutoBan(conn, 0, deps);
+                lastError = fbMsg;
+                lastStatus = 502;
+                excluded.add(conn.id);
+                continue;
+              }
               deps.cooldowns.success(conn.id, model, circuitKey, deps.requestId);
               try {
-                const reply = await freebuffJsonReply(res);
+                const reply = await freebuffJsonReply(new Response(fbText));
                 // log the buffered freebuff reply (usage is inside the generated JSON)
                 const txt = await reply
                   .clone()
@@ -594,11 +616,12 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
           }
           if (cc) lastRaw = { body: bodyText, status: res.status };
           // freebuff: typed classification → session/run invalidation + server retry hints
+          // superseded/409 drops only the failing model session — full wipe reserved
+          // for explicit manual pause (re-admit storm otherwise)
           const fbErr = fb ? classifyFreebuffError(res.status, bodyText) : null;
           if (fbErr?.invalidate) {
-            invalidateFreebuff(conn.id);
+            invalidateFreebuffSession(conn.id, model);
             if (bodyText.includes("runId")) invalidateFreebuffRun(conn.id);
-            else if (fbRun) invalidateFreebuffSession(conn.id, model);
           }
           // runId not found is a run-level invalidate even when not 409
           if (fb && bodyText.includes("runId Not Found") && fbRun) {

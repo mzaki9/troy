@@ -839,6 +839,7 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
           return res;
         }
 
+        // manual operator use only, never call per-request (ban risk; server slot lingers to TTL)
         if ((request.method === "POST" || request.method === "DELETE") && path === "/api/providers/freebuff/pause") {
           const b = await readBody(request);
           const body = (b as { connId?: string; model?: string } | null) ?? {};
@@ -851,7 +852,7 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
           logStructured(200);
           return res;
         }
-        // legacy: DELETE session directly
+        // legacy: DELETE session directly — manual operator use only, never call per-request (ban risk; server slot lingers to TTL)
         if (request.method === "DELETE" && path === "/api/providers/freebuff/session") {
           const b = await readBody(request);
           const body = (b as { connId?: string; model?: string } | null) ?? {};

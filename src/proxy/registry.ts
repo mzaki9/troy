@@ -194,7 +194,7 @@ export const PROVIDERS: Provider[] = [
     aliases: ["freebuff", "fb"],
     baseUrl: "https://www.codebuff.com/api/v1/chat/completions",
     auth: "bearer",
-    headers: { "User-Agent": "ai-sdk/openai-compatible/1.0.0/codebuff" },
+    headers: { "User-Agent": "ai-sdk/openai-compatible/0.0.171/codebuff" },
     autoToken: true,
     // ponytail: mirrors freebuff-proxy's ServedModels gate list — refresh when
     // upstream retires/adds models (admission decides per token anyway)

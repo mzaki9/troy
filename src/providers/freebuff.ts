@@ -13,7 +13,8 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 
-const UPSTREAM_UA = "ai-sdk/openai-compatible/1.0.0/codebuff";
+/** mirrors binary chat UA ai-sdk/openai-compatible/${__PACKAGE_VERSION__}/codebuff; bump with CLI version in ~/.config/manicode/freebuff-metadata.json */
+export const UPSTREAM_UA = "ai-sdk/openai-compatible/0.0.171/codebuff";
 const CLI_MARKER =
   "You are Buffy, the strategic coding assistant. You are the AI agent behind the product, Freebuff, a tool where users can chat with you to code with AI for free.";
 /** upstream gate = trimmed-prefix test at position 0 of the first system message */
@@ -50,8 +51,20 @@ interface FreebuffSession {
   expiresAt: number; // epoch ms; Infinity for disabled
 }
 
-const sessions = new Map<string, { sess?: FreebuffSession; refreshing?: Promise<FreebuffSession> }>();
-const runs = new Map<string, { run?: FreebuffRun; refreshing?: Promise<FreebuffRun> }>();
+interface SessionEntry {
+  sess?: FreebuffSession;
+  /** admitted TTL (expiresAt - now at admit); drives 10% margin. Absent when TTL unknown. */
+  ttlMs?: number;
+  refreshing?: Promise<FreebuffSession>;
+}
+
+const sessions = new Map<string, SessionEntry>();
+/** per-conn admission mutex: cold start joins one POST so N models never fire N creates (session_limit risk) */
+const connPending = new Map<string, Promise<FreebuffSession>>();
+function sessionMargin(e: SessionEntry | undefined): number {
+  const tenth = e?.ttlMs != null && Number.isFinite(e.ttlMs) ? e.ttlMs * 0.1 : 0;
+  return Math.max(EXPIRY_MARGIN_MS, tenth);
+}
 
 function sessionKey(connId: string, model: string): string {
   return `${connId}:${model || "*"}`;
@@ -63,6 +76,7 @@ function runKey(connId: string, agentId: string): string {
 export function invalidateFreebuff(connId: string): void {
   for (const k of [...sessions.keys()]) if (k === connId || k.startsWith(`${connId}:`)) sessions.delete(k);
   for (const k of [...runs.keys()]) if (k === connId || k.startsWith(`${connId}:`)) runs.delete(k);
+  connPending.delete(connId);
 }
 
 export function invalidateFreebuffSession(connId: string, model: string): void {
@@ -95,13 +109,15 @@ const AGENT_BY_MODEL: Record<string, string> = {
 
 export function agentForModel(model: string): string {
   if (AGENT_BY_MODEL[model]) return AGENT_BY_MODEL[model];
-  // fallback: use provider prefix
+  // fallback: use provider prefix (agentId is cache-key only, never sent upstream)
   const prov = model.split("/")[0] ?? "";
   if (prov === "mimo") return "base2-free-mimo";
   if (prov === "minimax") return "base2-free-minimax-m3";
   if (prov === "openai") return "base2-free-luna";
   if (prov === "deepseek") return "base2-free-deepseek";
   if (prov === "z-ai") return "base2-free-glm";
+  // covers registry google/gemini-*-flash-lite entries
+  if (prov === "google") return "base2-free-gemini-3-8-flash";
   return "base2-free-mimo";
 }
 
@@ -114,6 +130,7 @@ export function getFreebuffSessions(): { key: string; instanceId: string; expire
   return out;
 }
 
+// manual-only, never per-request (ban risk); server slot lingers to TTL — deliberate, no DELETE in hot path
 export async function pauseFreebuff(connId?: string, model?: string): Promise<number> {
   let n = 0;
   if (connId && model) {
@@ -190,11 +207,9 @@ export function discoverFreebuffToken(home?: string): string {
   }
   return "";
 }
-
-function fbHeaders(conn: ConnLike, json: boolean): Record<string, string> {
-  const h: Record<string, string> = { authorization: `Bearer ${conn.api_key}`, "user-agent": UPSTREAM_UA };
-  if (json) h["content-type"] = "application/json";
-  return h;
+/** session headers: Authorization-only (binary BG sends never UA/content-type; model rides x-freebuff-model). UPSTREAM_UA stays exported for chat path only. */
+function fbHeaders(conn: ConnLike): Record<string, string> {
+  return { authorization: `Bearer ${conn.api_key}` };
 }
 
 async function createSession(
@@ -203,8 +218,8 @@ async function createSession(
   model: string,
   doFetch: typeof fetch,
 ): Promise<FreebuffSession> {
-  // CLI parity (#120): bare POST — NO body, NO content-type; model rides x-freebuff-model
-  const headers = fbHeaders(conn, false);
+  // CLI parity: bare POST — NO body, NO content-type, NO user-agent; model rides x-freebuff-model
+  const headers = fbHeaders(conn);
   if (model) headers["x-freebuff-model"] = model;
   const res = await doFetch(`${origin}/api/v1/freebuff/session`, { method: "POST", headers });
   const text = await res.text().catch(() => "");
@@ -216,7 +231,12 @@ async function createSession(
     /* non-JSON body */
   }
   const status = str(b.status);
-  const retryMs = typeof b.retryAfterMs === "number" ? b.retryAfterMs : undefined;
+  const headerRetryMs = (() => {
+    const v = res.headers?.get?.("retry-after");
+    const n = v == null || v === "" ? NaN : Number(v);
+    return Number.isFinite(n) && n >= 0 ? n * 1000 : undefined;
+  })();
+  const retryMs = typeof b.retryAfterMs === "number" ? b.retryAfterMs : headerRetryMs;
   const abort = (msg: string, retryAfterMs?: number): never => {
     throw Object.assign(new Error(msg), { retryAfterMs });
   };
@@ -231,6 +251,13 @@ async function createSession(
   }
   if (status === "country_blocked")
     return abort(`freebuff country blocked${str(b.countryCode) ? ` (${str(b.countryCode)})` : ""}`);
+  // binary outcomes: 409 POST → model_locked/model_unavailable; 429 POST → rate_limited/spend_limited/ip_capped
+  if (status === "model_locked") return abort("freebuff model locked", retryMs);
+  if (status === "model_unavailable") return abort("freebuff model unavailable", retryMs);
+  if (status === "rate_limited") return abort("freebuff rate limited", retryMs);
+  if (status === "spend_limited") return abort("freebuff spend limited", retryMs);
+  if (status === "ip_capped") return abort("freebuff ip capped", retryMs);
+  if (status === "premium_slot_taken") return abort("freebuff premium slot taken", retryMs);
   // only a CREATE 404 maps to disabled (Go semantics); ended on create is dead too
   if (res.status === 404 || status === "disabled") return { instanceId: "", expiresAt: Number.POSITIVE_INFINITY };
   if (!res.ok) abort(`freebuff session ${res.status}: ${text.slice(0, 200)}`, retryMs);
@@ -246,16 +273,38 @@ export async function ensureFreebuffSession(
 ): Promise<FreebuffSession> {
   const key = sessionKey(conn.id, model);
   const st = sessions.get(key);
-  if (st?.sess && st.sess.expiresAt - EXPIRY_MARGIN_MS > Date.now()) return st.sess;
+  if (st?.sess && st.sess.expiresAt - sessionMargin(st) > Date.now()) return st.sess;
   if (st?.refreshing) return st.refreshing;
-  const refreshing = createSession(origin, conn, model, doFetch)
+  // join an in-flight admission from another model on the same conn — one POST total
+  const joined = connPending.get(conn.id);
+  if (joined) {
+    const refreshing = joined
+      .then((sess) => {
+        const ttlMs = Number.isFinite(sess.expiresAt) ? Math.max(sess.expiresAt - Date.now(), 0) : undefined;
+        sessions.set(key, { sess, ttlMs });
+        return sess;
+      })
+      .catch((err: unknown) => {
+        sessions.delete(key);
+        throw err;
+      });
+    sessions.set(key, { ...st, refreshing });
+    return refreshing;
+  }
+  const raw = createSession(origin, conn, model, doFetch);
+  connPending.set(conn.id, raw);
+  const refreshing = raw
     .then((sess) => {
-      sessions.set(key, { sess });
+      const ttlMs = Number.isFinite(sess.expiresAt) ? Math.max(sess.expiresAt - Date.now(), 0) : undefined;
+      sessions.set(key, { sess, ttlMs });
       return sess;
     })
     .catch((err: unknown) => {
       sessions.delete(key);
       throw err;
+    })
+    .finally(() => {
+      if (connPending.get(conn.id) === raw) connPending.delete(conn.id);
     });
   sessions.set(key, { ...st, refreshing });
   return refreshing;
@@ -269,6 +318,7 @@ interface FreebuffRun {
   step: number;
   expiresAt: number;
 }
+const runs = new Map<string, { run?: FreebuffRun; refreshing?: Promise<FreebuffRun> }>();
 
 export async function ensureFreebuffRun(
   _origin: string,
@@ -278,7 +328,12 @@ export async function ensureFreebuffRun(
 ): Promise<FreebuffRun> {
   const key = runKey(conn.id, agentId);
   const st = runs.get(key);
-  if (st?.run && st.run.expiresAt - EXPIRY_MARGIN_MS > Date.now()) return st.run;
+  // binary run progresses: each chat advances the step, slot expiry stays fixed
+  if (st?.run && st.run.expiresAt - EXPIRY_MARGIN_MS > Date.now()) {
+    st.run.step += 1;
+    runs.set(key, { run: st.run });
+    return st.run;
+  }
   if (st?.refreshing) return st.refreshing;
   const run: FreebuffRun = {
     runId: crypto.randomUUID(),
@@ -326,7 +381,7 @@ export function ensureMarker(messages: unknown): Obj[] {
 
 /**
  * chat body → CLI envelope. Merges without disturbing client fields:
- * codebuff_metadata (run_id + fresh SDK-faithful client_id draw), provider
+ * codebuff_metadata (run_id + boot-stable wf-xxxxxxxx client_id), provider
  * data_collection=deny, stream=true, cb_easp stop sentinel when absent.
  */
 export function wrapFreebuff(
@@ -372,23 +427,33 @@ export function classifyFreebuffError(status: number, bodyText: string): Freebuf
     ...o,
   });
   if (bodyText.includes("session_superseded")) return info("session superseded", { invalidate: true });
-  if (status === 409)
-    return bodyText.includes("session_limit_reached")
-      ? info("session limit reached")
-      : info("session invalid", { invalidate: true });
+  if (status === 409) {
+    if (bodyText.includes("session_limit_reached")) return info("session limit reached");
+    if (bodyText.includes("model_locked")) return info("model locked", { retryAfterMs: dur });
+    if (bodyText.includes("model_unavailable")) return info("model unavailable", { retryAfterMs: dur });
+    return info("session invalid", { invalidate: true });
+  }
+  if (bodyText.includes("premium_slot_taken")) return info("premium slot taken", { retryAfterMs: dur });
   if (status === 403) {
     if (b.status === "banned") {
       const until = ms(b.resumes_at);
       return info("account banned", { retryAfterMs: until ? until - Date.now() : dur });
     }
-    if (b.status === "country_blocked") return info("country blocked");
+    // binary stops polling on country block — 24h cooldown, never a 30s relock spin
+    if (b.status === "country_blocked") return info("country blocked", { retryAfterMs: 24 * 3600 * 1000 });
     if (bodyText.includes("free_mode_cli_required")) return info("free mode requires CLI envelope");
     return info("forbidden");
   }
   if (status === 401) return info("auth rejected");
   if (status === 402) return info("no credits");
-  if (status === 428) return info("waiting room required", { retryAfterMs: dur });
-  if (status === 429) return info(bodyText.includes("ip_capped") ? "ip capped" : "rate limited", { retryAfterMs: dur });
+  // null duration floors at 10s like the capacity line
+  if (status === 428) return info("waiting room required", { retryAfterMs: Math.max(dur ?? 0, 10_000) });
+  if (status === 429) {
+    if (bodyText.includes("ip_capped")) return info("ip capped", { retryAfterMs: dur });
+    if (bodyText.includes("spend_limited")) return info("spend limited", { retryAfterMs: dur });
+    if (bodyText.includes("rate_limited")) return info("rate limited", { retryAfterMs: dur });
+    return info("rate limited", { retryAfterMs: dur });
+  }
   if (bodyText.includes("free_mode_capacity_deferred"))
     return info("capacity deferred", { retryAfterMs: Math.max(dur ?? 0, 10_000) });
   return info("");
