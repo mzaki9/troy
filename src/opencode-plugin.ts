@@ -86,6 +86,8 @@ export default {
                 { id: "low", settings: { reasoningEffort: "low" } },
                 { id: "medium", settings: { reasoningEffort: "medium" } },
                 { id: "high", settings: { reasoningEffort: "high" } },
+                { id: "xhigh", settings: { reasoningEffort: "xhigh" } },
+                { id: "max", settings: { reasoningEffort: "max" } },
               ];
             }
           });

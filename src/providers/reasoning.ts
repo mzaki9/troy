@@ -26,6 +26,7 @@ const REASONING: RegExp[] = [
   /^minimax-m2/, // minimax m2 thinking mode
   /^ernie-4\.5/, // ernie-4.5-8k thinks
   /^nemotron-3/, // nvidia nemotron-3 ultra
+  /^muse(-|$)/, // meta muse family (spark, glimmer)
 ];
 
 /** Whether a model id is reasoning-capable. */

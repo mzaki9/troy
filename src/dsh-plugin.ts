@@ -51,7 +51,7 @@ function modelEntry(m) {
   // thinking models get selectable levels ("off" sends nothing on the wire;
   // dsh's schema wants null there, an empty string is rejected)
   if (m.reasoning === true) {
-    entry.reasoningEfforts = { off: null, low: "low", medium: "medium", high: "high" };
+    entry.reasoningEfforts = { off: null, low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" };
   }
   return entry;
 }
