@@ -91,8 +91,8 @@ docker compose up -d --build     # dashboard → http://localhost:31337
 docker logs -f troy-troy-1       # grab the default password on first boot
 
 # plain docker, same thing:
-docker build -t troy-proxy .
-docker run -d -p 31337:31337 -v troy-data:/data --name troy troy-proxy
+docker build -t mzaki9/troy .
+docker run -d -p 31337:31337 -v troy-data:/data --name troy mzaki9/troy
 ```
 
 The SQLite DB lives in the `troy-data` volume (`TROY_DATA=/data` in-container).

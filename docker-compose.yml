@@ -1,7 +1,7 @@
 services:
   troy:
     build: .
-    image: troy-proxy:latest
+    image: mzaki9/troy:latest
     ports:
       - "31337:31337"
     volumes:
