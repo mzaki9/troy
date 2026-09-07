@@ -179,7 +179,7 @@ Combos expose the **weakest-member** capability set — no surprise failures mid
 ## 🗜️ RTK & prompt styles — built in
 
 Coding agents shovel raw `git log`, diffs and grep dumps into context. RTK detects the output
-type and compresses it — commit hashes only, hunk-aware diff truncation, per-file grep grouping,
+type and compresses it — hash + subject log lines, hunk-aware diff truncation, per-file grep grouping,
 head+tail truncation — before the request leaves your machine. On by default, zero setup.
 Savings are logged per request (`rtk_saved` / `rtk_seen`) so the ratio stays honest.
 

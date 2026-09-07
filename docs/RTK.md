@@ -18,13 +18,13 @@ Auto-detected from the first 1 024-char window:
 
 | Filter | Trigger | Behavior |
 |---|---|---|
-| `gitLog` | commit-hash shape | hashes only |
-| `gitDiff` | diff headers | hunk-aware: ≤ 100 lines/hunk, ≤ 500 total, keeps `+N −M` tallies, appends "[full diff: rtk git diff --no-compact]" |
-| `gitStatus` | status/porcelain (≥ 60 % hits over ≥ 3 lines) | groups untracked/modified/added/deleted |
-| `grep` | `file:line:content` | groups per file, ≤ 10 matches/file, "N matches in M files" summary |
-| `tree` | tree glyphs | ≤ 200 lines |
-| `find` | paths | grouped by dir, ≤ 10/dir, ≤ 20 dirs |
-| `ls` | permission columns | dirs + files with sizes, top-5 extension histogram |
+| `gitLog` | full `commit <hash>` lines or ≥ 60 % oneline `<hash> <subject>` | hash + ≤ 120-char subject, ≤ 200 commits, overflow hint |
+| `gitDiff` | diff headers | hunk-aware: ≤ 100 lines/hunk, ≤ 500 total, keeps `+N −M` tallies |
+| `gitStatus` | status/porcelain (≥ 60 % hits over ≥ 3 lines) or `On branch` long form | groups untracked/modified/staged(+added/deleted) |
+| `grep` | `file:line:content` | keeps `line: content`, groups per file, ≤ 10 shown/file with `shown/total` + recovery hint |
+| `tree` | tree glyphs | ≤ 200 lines, overflow hint |
+| `find` | paths | grouped by dir, ≤ 10 shown/dir, ≤ 20 dirs, honest totals + recovery hint |
+| `ls` | permission columns (incl. `@`/`+`/`.` ACL markers) | dirs + files with sizes, top-5 extension histogram |
 | `smartTruncate` | fallback, ≥ 250 lines | head 120 + tail 60 lines, "... +N lines truncated" |
 
 ## Accounting
@@ -32,9 +32,9 @@ Auto-detected from the first 1 024-char window:
 `compressMessages` walks `messages[]`, compressing `role:"tool"` contents (string or text
 blocks) and Claude-style `tool_result` text blocks (`is_error` blocks skipped).
 
-Every request logs `rtk_saved` / `rtk_seen` chars — **seen is counted even when no filter
-shrank anything** — so the dashboard's savings ratio stays honest instead of only counting
-wins.
+Every request logs `rtk_saved` / `rtk_seen` chars — **seen counts every block that
+passes the size gates, even when no filter matches** — so the dashboard's savings
+ratio stays honest instead of only counting wins.
 
 ## Prompt injectors (optional companions)
 

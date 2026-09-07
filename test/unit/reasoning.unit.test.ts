@@ -15,6 +15,7 @@ describe("reasoning (pure combinatorics — kept as unit)", () => {
     expect(resolveEffortAlias("gpt-4o-high").effort).toBeUndefined();
     // "minimal" is not server-valid — the alias must not resolve it.
     expect(resolveEffortAlias("o3-mini-minimal").effort).toBeUndefined();
-    for (const a of ["low", "medium", "high", "xhigh", "max"]) expect(resolveEffortAlias(`o3-mini-${a}`).effort).toBe(a);
+    for (const a of ["low", "medium", "high", "xhigh", "max"])
+      expect(resolveEffortAlias(`o3-mini-${a}`).effort).toBe(a);
   });
 });
