@@ -10,6 +10,7 @@ import { UsagePage } from "./pages/usage";
 import type { PageId } from "./sidebar";
 import { Sidebar } from "./sidebar";
 import { Topbar } from "./topbar";
+import { UpdateBanner } from "./update-banner";
 
 interface SessionInfo {
   authed: boolean;
@@ -80,6 +81,7 @@ export default function App() {
           onLogout={() => setSession({ ...session, authed: false })}
           onMenu={() => setDrawerOpen((v) => !v)}
         />
+        <UpdateBanner />
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5 lg:p-8">
           <div key={page} className="view-switch mx-auto max-w-7xl space-y-5">
             {page === "usage" && <UsagePage />}

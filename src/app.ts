@@ -36,6 +36,7 @@ import {
   handleChat,
 } from "./proxy/route";
 import type { ApiAuth, DashPass, Store } from "./store/db";
+import { getUpdateStatus, type StopUpdateChecks, startUpdateChecks } from "./update";
 
 // ponytail: in-memory only; add persistent SQLite cache when multi-instance
 const PROVIDER_MODELS_TTL_MS = Number(process.env.PROVIDER_MODELS_TTL_MS ?? 300_000);
@@ -365,6 +366,7 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
     }, 60_000);
     gcTimer.unref?.();
   }
+  const stopUpdates: StopUpdateChecks | null = enableBackgroundTasks ? startUpdateChecks() : null;
 
   // Bun 1.4 `{ dir }` route value — requires @types/bun >=1.4.
   const staticRoutes: Record<string, unknown> = enableBackgroundTasks
@@ -521,6 +523,7 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
               p.startsWith("/v1/models/") ||
               p === "/api/providers" ||
               p === "/api/modelsdev/status" ||
+              p === "/api/update/status" ||
               (p.startsWith("/api/providers/") && p.endsWith("/models")))
           );
         }
@@ -1024,6 +1027,12 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
           return res;
         }
 
+        if (path === "/api/update/status" && request.method === "GET") {
+          const res = json(getUpdateStatus(), 200, { "x-request-id": requestId });
+          logStructured(200);
+          return res;
+        }
+
         if (path === "/api/settings") {
           if (request.method === "GET") {
             const res = json(settings, 200, { "x-request-id": requestId });
@@ -1309,6 +1318,9 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
       } catch {}
       try {
         clearInterval(gcTimer as unknown as NodeJS.Timeout);
+      } catch {}
+      try {
+        stopUpdates?.();
       } catch {}
       try {
         globalLimiter?.stop();

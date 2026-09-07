@@ -108,6 +108,13 @@ export interface ApiKeyInfo {
   key: string;
   on: boolean;
 }
+export interface UpdateStatus {
+  current: string;
+  latest: string | null;
+  updateAvailable: boolean;
+  checkedAt: string | null;
+  disabled: boolean;
+}
 
 /** Poll an API endpoint; refetch() forces an immediate reload. */
 export function useApi<T>(path: string | null, opts: { interval?: number } = {}) {
