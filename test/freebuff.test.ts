@@ -13,6 +13,9 @@ import {
   UPSTREAM_UA,
   wrapFreebuff,
 } from "../src/providers/freebuff";
+import { CooldownStore } from "../src/proxy/cooldown";
+import { handleChat } from "../src/proxy/route";
+import { Store } from "../src/store/db";
 
 const MARKER_PREFIX = "You are Buffy, the strategic coding assistant";
 const conn = { id: "c1", api_key: "cb_test" };
@@ -210,5 +213,73 @@ describe("freebuff error + token + reply (integrated)", () => {
         .length,
     ).toBe(1);
     await expect(freebuffJsonReply(sse([{ error: { message: "boom" } }]))).rejects.toThrow("boom");
+  });
+});
+
+describe("freebuff admission gate (integrated)", () => {
+  test("model_locked/model_unavailable classify floors at 60s without a hint", async () => {
+    for (const [marker, reason] of [
+      ["model_locked", "model locked"],
+      ["model_unavailable", "model unavailable"],
+    ] as const) {
+      expect(classifyFreebuffError(409, `{"status":"${marker}"}`)).toMatchObject({ reason, retryAfterMs: 60_000 });
+      expect(classifyFreebuffError(429, `{"error":"${marker}"}`)).toMatchObject({ reason, retryAfterMs: 60_000 });
+      expect(classifyFreebuffError(200, `{"status":"${marker}","retryAfterMs":9000}`)).toMatchObject({
+        reason,
+        retryAfterMs: 9000,
+      });
+    }
+    // byte-identical neighbors: 24h country block, 10s 428 floor, no invalidate on model states
+    expect(classifyFreebuffError(403, JSON.stringify({ status: "country_blocked" })).retryAfterMs).toBe(
+      24 * 3600 * 1000,
+    );
+    expect(classifyFreebuffError(428, "{}").retryAfterMs).toBe(10_000);
+    expect(classifyFreebuffError(409, '{"status":"model_locked"}').invalidate).toBe(false);
+    expect(classifyFreebuffError(409, '{"error":"session_superseded"}').invalidate).toBe(true);
+  });
+
+  test("admission failure never forwards chat: 60s model-scoped cooldown, zero chat POST", async () => {
+    const chatHits: string[] = [];
+    const realFetch = globalThis.fetch;
+    const model = `admit-locked-${Math.random().toString(36).slice(2, 8)}`;
+    (globalThis as Record<string, unknown>).fetch = (async (url: unknown, init?: RequestInit) => {
+      const u = String(url);
+      if (u.endsWith("/api/v1/freebuff/session")) {
+        return new Response(JSON.stringify({ status: "model_unavailable" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      chatHits.push(u);
+      throw new Error(`chat must never forward, hit ${u} ${init?.method}`);
+    }) as unknown as typeof fetch;
+    const store = new Store(":memory:");
+    const cooldowns = new CooldownStore();
+    const account = store.addConnection({ provider: "freebuff", api_key: "cb_test" });
+    invalidateFreebuff(account.id);
+    try {
+      const t0 = Date.now();
+      const res = await handleChat(
+        { model: `freebuff/${model}`, messages: [{ role: "user", content: "hi" }] },
+        {
+          store,
+          cooldowns,
+          strategy: "fill-first",
+          rtkOn: false,
+          cavemanLevel: "off",
+          ponytailLevel: "off",
+          onLog: () => {},
+        },
+      );
+      expect(chatHits.length).toBe(0);
+      expect(res.status).toBe(503);
+      expect(await res.text()).toContain("model unavailable");
+      const expiry = cooldowns.lockExpiry(account.id, model);
+      expect(expiry - t0).toBeGreaterThanOrEqual(59_000);
+      expect(expiry - t0).toBeLessThanOrEqual(61_000);
+    } finally {
+      (globalThis as Record<string, unknown>).fetch = realFetch;
+      invalidateFreebuff(account.id);
+    }
   });
 });

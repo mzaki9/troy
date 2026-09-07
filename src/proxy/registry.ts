@@ -16,8 +16,6 @@ export interface Provider {
   placeholders?: string[];
   /** Connection may store an empty key — the token is auto-discovered (CLI credentials file). */
   autoToken?: boolean;
-  /** Static model catalog for providers without a live models endpoint. */
-  staticModels?: string[];
 }
 
 const httpref = { "HTTP-Referer": "https://troy.local", "X-Title": "troy" };
@@ -196,22 +194,6 @@ export const PROVIDERS: Provider[] = [
     auth: "bearer",
     headers: { "User-Agent": "ai-sdk/openai-compatible/0.0.171/codebuff" },
     autoToken: true,
-    // ponytail: mirrors freebuff-proxy's ServedModels gate list — refresh when
-    // upstream retires/adds models (admission decides per token anyway)
-    staticModels: [
-      "deepseek/deepseek-v4-flash",
-      "deepseek/deepseek-v4-pro",
-      "mimo/mimo-v2.5",
-      "minimax/minimax-m3",
-      "openai/gpt-5.6-luna",
-      "z-ai/glm-5.2",
-      "anthropic/claude-fable-5",
-      "crof/kimi-k3-eco",
-      "meta/muse-spark-1.2-contributor",
-      "google/gemini-2.5-flash-lite",
-      "google/gemini-3.1-flash-lite",
-      "google/gemini-3.5-flash-lite",
-    ],
   } /* FreeBuff free tier — CLI envelope + session bridge in providers/freebuff.ts; key = CLI login authToken (auto-discovered from ~/.config/manicode/credentials.json when the connection has no key) */,
   {
     id: "zai",

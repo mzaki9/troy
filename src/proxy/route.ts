@@ -495,7 +495,10 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
                   /* non-JSON body */
                 }
                 const fbMsg = `freebuff ${fbTerm} — ${fbText}`.slice(0, 300);
-                deps.cooldowns.fail(conn.id, model, 0, fbMsg, circuitKey, fbRetry, deps.requestId);
+                // model states re-release in batches: floor at 60s with no hint, never the 30s transient
+                const fbFloor =
+                  (fbTerm === "model_locked" || fbTerm === "model_unavailable") && fbRetry == null ? 60_000 : fbRetry;
+                deps.cooldowns.fail(conn.id, model, 0, fbMsg, circuitKey, fbFloor, deps.requestId);
                 tryAutoBan(conn, 0, deps);
                 lastError = fbMsg;
                 lastStatus = 502;

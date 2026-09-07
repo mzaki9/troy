@@ -5,8 +5,8 @@ Two jobs: **discovery** (what can I use?) and **enrichment** (what can this mode
 ## Discovery — providers own it
 
 Each provider's `/models` endpoint is probed live (`GET /api/providers/<id>/models`, 15 s
-timeout); providers without one serve their `staticModels`. Every model gets enriched with its
-thinking flag on the way out.
+timeout). Freebuff exposes no catalog (`url: "manual"` — explicit spec + session admission
+gate). Every model gets enriched with its thinking flag on the way out.
 
 ## Enrichment — models.dev
 

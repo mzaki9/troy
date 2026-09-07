@@ -870,21 +870,15 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
             logStructured(404, "unknown provider");
             return res;
           }
-          const conn = store.listConnections(id).find((c) => c.is_active === 1) ?? null;
-          const headers = conn ? authHeaders(def, conn) : {};
-          const base = conn ? buildBaseUrl(def, conn) : def.baseUrl;
-          if (def.staticModels) {
-            const res = json(
-              {
-                url: "static",
-                models: def.staticModels.map((mid) => ({ id: mid, name: mid, thinking: enrich(mid).reasoning })),
-              },
-              200,
-              { "x-request-id": requestId },
-            );
+          // no advertised catalog (ban-safe): upstream /models is the paid catalog, a hardcoded list rots; user types the spec explicitly, session admission decides
+          if (id === "freebuff") {
+            const res = json({ url: "manual", models: [] }, 200, { "x-request-id": requestId });
             logStructured(200);
             return res;
           }
+          const conn = store.listConnections(id).find((c) => c.is_active === 1) ?? null;
+          const headers = conn ? authHeaders(def, conn) : {};
+          const base = conn ? buildBaseUrl(def, conn) : def.baseUrl;
           const modelsUrl =
             def.modelsUrl ??
             (base.endsWith("/chat/completions") ? base.replace(/\/chat\/completions$/, "/models") : `${base}/models`);

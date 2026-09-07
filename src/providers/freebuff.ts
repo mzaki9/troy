@@ -252,8 +252,9 @@ async function createSession(
   if (status === "country_blocked")
     return abort(`freebuff country blocked${str(b.countryCode) ? ` (${str(b.countryCode)})` : ""}`);
   // binary outcomes: 409 POST → model_locked/model_unavailable; 429 POST → rate_limited/spend_limited/ip_capped
-  if (status === "model_locked") return abort("freebuff model locked", retryMs);
-  if (status === "model_unavailable") return abort("freebuff model unavailable", retryMs);
+  // 60s floor mirrors classify: admission without a hint must not hot-spin the 30s transient
+  if (status === "model_locked") return abort("freebuff model locked", retryMs ?? 60_000);
+  if (status === "model_unavailable") return abort("freebuff model unavailable", retryMs ?? 60_000);
   if (status === "rate_limited") return abort("freebuff rate limited", retryMs);
   if (status === "spend_limited") return abort("freebuff spend limited", retryMs);
   if (status === "ip_capped") return abort("freebuff ip capped", retryMs);
@@ -427,10 +428,12 @@ export function classifyFreebuffError(status: number, bodyText: string): Freebuf
     ...o,
   });
   if (bodyText.includes("session_superseded")) return info("session superseded", { invalidate: true });
+  // model states ride any status (409/429 POST, chat-200 terminal mirror): 60s floor —
+  // upstream re-releases models in batches, so never permanent, never the 30s transient
+  if (bodyText.includes("model_locked")) return info("model locked", { retryAfterMs: dur ?? 60_000 });
+  if (bodyText.includes("model_unavailable")) return info("model unavailable", { retryAfterMs: dur ?? 60_000 });
   if (status === 409) {
     if (bodyText.includes("session_limit_reached")) return info("session limit reached");
-    if (bodyText.includes("model_locked")) return info("model locked", { retryAfterMs: dur });
-    if (bodyText.includes("model_unavailable")) return info("model unavailable", { retryAfterMs: dur });
     return info("session invalid", { invalidate: true });
   }
   if (bodyText.includes("premium_slot_taken")) return info("premium slot taken", { retryAfterMs: dur });

@@ -5,7 +5,7 @@
 ~45 built-in providers live in `src/proxy/registry.ts`. Each entry:
 
 ```ts
-{ id, aliases[], name?, baseUrl, modelsUrl?, auth, headers?, placeholders?, autoToken?, staticModels? }
+{ id, aliases[], name?, baseUrl, modelsUrl?, auth, headers?, placeholders?, autoToken? }
 ```
 
 - **auth modes** — `bearer` (`Authorization: Bearer …`), `raw` (`x-api-key`), or `none`
@@ -14,7 +14,7 @@
 - **placeholders** — `{placeholder}` tokens in baseUrl filled from the connection's `extra`
   JSON (e.g. Cloudflare's `{accountId}`)
 - **autoToken** — providers whose token is discovered locally
-- **staticModels** — providers without a usable models endpoint ship their catalog inline
+- **freebuff** — exposes no catalog (`url: "manual"`): type the model spec explicitly, session admission decides
 
 Highlights beyond the majors: OpenRouter, Groq, DeepSeek, Cerebras, xAI, Mistral, Together,
 NVIDIA, Fireworks, SiliconFlow, Hyperbolic, Perplexity, Cohere, z.ai/Zhipu, Baidu Qianfan,

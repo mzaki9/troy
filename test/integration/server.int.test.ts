@@ -371,8 +371,11 @@ describe("dashboard CRUD (integrated)", () => {
     expect((await fetch(`${t.url}/api/logs?limit=10`, { headers: h })).status).toBe(200);
     expect((await fetch(`${t.url}/api/modelsdev/status`, { headers: h })).status).toBe(200);
     expect(
-      ((await (await fetch(`${t.url}/api/providers/freebuff/models`, { headers: h })).json()) as { url: string }).url,
-    ).toBe("static");
+      (await (await fetch(`${t.url}/api/providers/freebuff/models`, { headers: h })).json()) as {
+        url: string;
+        models: unknown[];
+      },
+    ).toEqual({ url: "manual", models: [] });
     expect((await fetch(`${t.url}/api/providers/unknown/models`, { headers: h })).status).toBe(404);
     expect(
       typeof (
