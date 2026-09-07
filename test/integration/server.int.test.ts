@@ -154,7 +154,11 @@ describe("proxy + dashboard gate (integrated)", () => {
     expect([200, 502].includes(r1.status)).toBe(true);
     const r2 = await fetch(`${t.url}/api/providers/freebuff/models`, { headers: apiKeyHeaders });
     expect(r2.status).not.toBe(401);
-    expect(r2.status).toBe(200);
+    expect([200, 502].includes(r2.status)).toBe(true);
+    const r2j = (await r2.json()) as { url: string; models: unknown[]; error?: string };
+    expect(r2j.url.endsWith("/api/v1/freebuff/session")).toBe(true);
+    expect(Array.isArray(r2j.models)).toBe(true);
+    if (r2.status === 502) expect(r2j.error).toBe("no key");
     const r2b = await fetch(`${t.url}/api/providers/openai/models`, { headers: apiKeyHeaders });
     expect(r2b.status).not.toBe(401);
     const { cookie } = await t.login();
@@ -370,12 +374,12 @@ describe("dashboard CRUD (integrated)", () => {
     ).toBe(7);
     expect((await fetch(`${t.url}/api/logs?limit=10`, { headers: h })).status).toBe(200);
     expect((await fetch(`${t.url}/api/modelsdev/status`, { headers: h })).status).toBe(200);
-    expect(
-      (await (await fetch(`${t.url}/api/providers/freebuff/models`, { headers: h })).json()) as {
-        url: string;
-        models: unknown[];
-      },
-    ).toEqual({ url: "manual", models: [] });
+    const fbRes = await fetch(`${t.url}/api/providers/freebuff/models`, { headers: h });
+    expect([200, 502].includes(fbRes.status)).toBe(true);
+    const fbBody = (await fbRes.json()) as { url: string; models: unknown[]; error?: string };
+    expect(fbBody.url.endsWith("/api/v1/freebuff/session")).toBe(true);
+    expect(Array.isArray(fbBody.models)).toBe(true);
+    if (fbRes.status === 502) expect(fbBody.error).toBe("no key");
     expect((await fetch(`${t.url}/api/providers/unknown/models`, { headers: h })).status).toBe(404);
     expect(
       typeof (

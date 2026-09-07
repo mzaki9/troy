@@ -538,3 +538,31 @@ export async function freebuffJsonReply(res: Response): Promise<Response> {
     headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
   });
 }
+
+/** live catalog: GET session endpoint (read-only poll shape, no admission, no slot burn). Catalog = freebucks.prices keys ∪ rateLimitsByModel keys. */
+export async function fetchFreebuffCatalog(
+  origin: string,
+  token: string,
+  doFetch: typeof fetch = fetch,
+): Promise<{ models: string[]; url: string }> {
+  const url = `${origin}/api/v1/freebuff/session`;
+  const res = await doFetch(url, { method: "GET", headers: { authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error(`upstream ${res.status}`);
+  let b: unknown = {};
+  try {
+    b = await res.json();
+  } catch {
+    return { models: [], url };
+  }
+  if (!isObj(b)) return { models: [], url };
+  const out = new Set<string>();
+  const prices = b.freebucks;
+  if (isObj(prices) && isObj(prices.prices)) {
+    for (const k of Object.keys(prices.prices)) if (k) out.add(k);
+  }
+  const limits = b.rateLimitsByModel;
+  if (isObj(limits)) {
+    for (const k of Object.keys(limits)) if (k) out.add(k);
+  }
+  return { models: [...out].sort(), url };
+}

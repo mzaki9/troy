@@ -5,6 +5,7 @@ import {
   ensureFreebuffRun,
   ensureFreebuffSession,
   ensureMarker,
+  fetchFreebuffCatalog,
   freebuffJsonReply,
   freebuffTokenPaths,
   invalidateFreebuff,
@@ -280,6 +281,44 @@ describe("freebuff admission gate (integrated)", () => {
     } finally {
       (globalThis as Record<string, unknown>).fetch = realFetch;
       invalidateFreebuff(account.id);
+    }
+  });
+});
+
+describe("freebuff live catalog (integrated)", () => {
+  const BODY = {
+    status: "active",
+    freebucks: { prices: { "mimo/mimo-v2.5": 1, "z-ai/glm-5.3-flash": 2, "openai/gpt-5.6-luna": 3 } },
+    rateLimitsByModel: { "mimo/mimo-v2.5": {}, "upstage/solar-pro4": {} },
+  };
+  function catalogFetch(body: unknown, status = 200) {
+    const seen: { url: unknown; method?: string; headers?: Record<string, string> }[] = [];
+    const f = (async (url: unknown, init?: { method?: string; headers?: Record<string, string> }) => {
+      seen.push({ url, method: init?.method, headers: { ...(init?.headers ?? {}) } });
+      return new Response(JSON.stringify(body), { status });
+    }) as unknown as typeof fetch;
+    return { fetch: f, seen };
+  }
+  test("prices ∪ rateLimits, deduped + sorted, GET auth-only", async () => {
+    const { fetch: f, seen } = catalogFetch(BODY);
+    const out = await fetchFreebuffCatalog("https://www.codebuff.com", "tok", f);
+    expect(out.url).toBe("https://www.codebuff.com/api/v1/freebuff/session");
+    expect(out.models).toEqual(["mimo/mimo-v2.5", "openai/gpt-5.6-luna", "upstage/solar-pro4", "z-ai/glm-5.3-flash"]);
+    expect(seen.length).toBe(1);
+    expect(seen[0].method).toBe("GET");
+    expect(seen[0].url).toBe("https://www.codebuff.com/api/v1/freebuff/session");
+    expect(seen[0].headers).toEqual({ authorization: "Bearer tok" });
+  });
+  test("non-ok throws upstream status", async () => {
+    const { fetch: f } = catalogFetch({}, 429);
+    await expect(fetchFreebuffCatalog("https://www.codebuff.com", "tok", f)).rejects.toThrow("upstream 429");
+  });
+  test("malformed shape → empty models", async () => {
+    for (const body of ["oops", 42, null, {}, { freebucks: null, rateLimitsByModel: [] }]) {
+      const { fetch: f } = catalogFetch(body);
+      const out = await fetchFreebuffCatalog("https://www.codebuff.com", "tok", f);
+      expect(out.models).toEqual([]);
+      expect(out.url).toBe("https://www.codebuff.com/api/v1/freebuff/session");
     }
   });
 });

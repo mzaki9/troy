@@ -16,7 +16,7 @@ import { enrich, enrichmentStatus } from "./modelsdev";
 import { clearOmpPlugin, installOmpPlugin, renderOmpPlugin } from "./omp-plugin";
 import { installOpenCodePlugin, renderOpenCodePlugin } from "./opencode-plugin";
 import { handleMessages } from "./providers/anthropic";
-import { discoverFreebuffToken, getFreebuffSessions, pauseFreebuff } from "./providers/freebuff";
+import { discoverFreebuffToken, fetchFreebuffCatalog, getFreebuffSessions, pauseFreebuff } from "./providers/freebuff";
 import { handleResponses } from "./providers/responses";
 import type { CooldownStore } from "./proxy/cooldown";
 import { FixedWindowLimiter, parseRateLimit } from "./proxy/rateLimit";
@@ -870,11 +870,72 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
             logStructured(404, "unknown provider");
             return res;
           }
-          // no advertised catalog (ban-safe): upstream /models is the paid catalog, a hardcoded list rots; user types the spec explicitly, session admission decides
+          // live catalog from upstream session GET (read-only poll shape, no admission, no slot burn)
           if (id === "freebuff") {
-            const res = json({ url: "manual", models: [] }, 200, { "x-request-id": requestId });
-            logStructured(200);
-            return res;
+            const fbConn = store.listConnections(id).find((c) => c.is_active === 1) ?? null;
+            let fbOrigin: string;
+            try {
+              fbOrigin = new URL(fbConn ? buildBaseUrl(def, fbConn) : def.baseUrl).origin;
+            } catch (e) {
+              const res = json(
+                { error: e instanceof Error ? e.message : "blocked private address", url: def.baseUrl, models: [] },
+                400,
+                {
+                  "x-request-id": requestId,
+                },
+              );
+              logStructured(400, "blocked private address");
+              return res;
+            }
+            const fbUrl = `${fbOrigin}/api/v1/freebuff/session`;
+            const fbToken = fbConn?.api_key || discoverFreebuffToken();
+            if (!fbToken) {
+              const res = json({ error: "no key", url: fbUrl, models: [] }, 502, { "x-request-id": requestId });
+              logStructured(502, "no key");
+              return res;
+            }
+            const cacheKey = `freebuff|${fbUrl}`;
+            const cached = providerModelsCache.get(cacheKey);
+            if (cached && Date.now() - cached.at < PROVIDER_MODELS_TTL_MS) {
+              logTrace(TAG.PROVIDER, `cache hit ${id}`);
+              const res = json(cached.payload, 200, { "x-request-id": requestId, "x-cache": "hit" });
+              logStructured(200);
+              return res;
+            }
+            try {
+              const { models } = await fetchFreebuffCatalog(fbOrigin, fbToken, ((
+                url: string | URL | Request,
+                init?: RequestInit,
+              ) => fetch(url, { ...init, signal: AbortSignal.timeout(15000), redirect: "manual" })) as typeof fetch);
+              const payload = {
+                url: fbUrl,
+                models: models.map((m) => ({ id: m, name: m, thinking: enrich(m).reasoning })),
+              };
+              providerModelsCache.set(cacheKey, { at: Date.now(), url: fbUrl, payload });
+              if (providerModelsCache.size > PROVIDER_MODELS_CACHE_MAX) {
+                const first = providerModelsCache.keys().next().value;
+                if (first) providerModelsCache.delete(first);
+              }
+              const res = json(payload, 200, { "x-request-id": requestId });
+              logStructured(200);
+              return res;
+            } catch (e: unknown) {
+              if (cached) {
+                cLog(TAG.PROVIDER, {
+                  msg: "stale cache fallback",
+                  provider: id,
+                  error: e instanceof Error ? e.message : String(e),
+                });
+                const res = json(cached.payload, 200, { "x-request-id": requestId, "x-cache": "stale" });
+                logStructured(200);
+                return res;
+              }
+              const res = json({ error: e instanceof Error ? e.message : String(e), url: fbUrl, models: [] }, 502, {
+                "x-request-id": requestId,
+              });
+              logStructured(502, e instanceof Error ? e.message : String(e));
+              return res;
+            }
           }
           const conn = store.listConnections(id).find((c) => c.is_active === 1) ?? null;
           const headers = conn ? authHeaders(def, conn) : {};
