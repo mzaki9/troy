@@ -18,7 +18,27 @@ export function CopyButton({
 }) {
   const [ok, setOk] = useState<string | null>(null);
   const copy = async () => {
-    await navigator.clipboard.writeText(text).catch(() => {});
+    let done = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      done = true;
+    } catch {
+      // plain-http dashboard (VPS IP) has no async clipboard — legacy path
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        done = document.execCommand("copy");
+        ta.remove();
+      } catch {
+        done = false;
+      }
+    }
+    if (!done) return;
     setOk(what);
     onCopied?.();
     setTimeout(() => setOk((c) => (c === what ? null : c)), 1500);
