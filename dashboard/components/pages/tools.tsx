@@ -256,10 +256,18 @@ export function ToolsPage() {
   const activeCombo = comboMap.get(model) ?? null;
   const key = keyInfo.data?.key ?? KEY_PLACEHOLDER;
   const troyUrlParam = encodeURIComponent(troyUrl);
-  const keyFlag = keyInfo.data?.on === 1 ? ` -H "Authorization: Bearer ${key}"` : "";
-  const opencodeCmd = `mkdir -p ~/.config/opencode/plugins && curl -sSL${keyFlag} '${base}/api/plugin/opencode.ts?baseUrl=${troyUrlParam}' -o ~/.config/opencode/plugins/troy.ts && echo 'troy plugin installed — restart OpenCode'`;
-  const ompCmd = `mkdir -p ~/.omp/agent/extensions && curl -sSL${keyFlag} '${base}/api/plugin/omp.ts?baseUrl=${troyUrlParam}' -o ~/.omp/agent/extensions/troy.ts && echo 'troy extension installed — restart omp'`;
-  const dshCmd = `curl -sSL${keyFlag} '${base}/api/plugin/dsh.sh?baseUrl=${troyUrlParam}' | sh && echo 'troy plugin installed — dsh hot-reloads it'`;
+  // Always emit a key header when one might be needed: logged-out copies carry the
+  // placeholder (ignored with auth off, loud 401 with auth on), so a missing session
+  // can never silently save {"error":"login required"} as troy.ts.
+  const keyFlag = keyInfo.data?.on
+    ? ` -H "Authorization: Bearer ${key}"`
+    : keyInfo.data == null
+      ? ` -H "Authorization: Bearer ${KEY_PLACEHOLDER}"`
+      : "";
+  // -f fails loudly on 401/400 (no silent JSON body); the grep marker gates the success line.
+  const opencodeCmd = `mkdir -p ~/.config/opencode/plugins && curl -sSLf${keyFlag} '${base}/api/plugin/opencode.ts?baseUrl=${troyUrlParam}' -o ~/.config/opencode/plugins/troy.ts && grep -q 'live OpenCode provider' ~/.config/opencode/plugins/troy.ts && echo 'troy plugin installed — restart OpenCode'`;
+  const ompCmd = `mkdir -p ~/.omp/agent/extensions && curl -sSLf${keyFlag} '${base}/api/plugin/omp.ts?baseUrl=${troyUrlParam}' -o ~/.omp/agent/extensions/troy.ts && grep -q 'live Oh My Pi provider' ~/.omp/agent/extensions/troy.ts && echo 'troy extension installed — restart omp'`;
+  const dshCmd = `curl -sSLf${keyFlag} '${base}/api/plugin/dsh.sh?baseUrl=${troyUrlParam}' -o /tmp/troy-dsh-install.sh && grep -q 'troy dsh remote installer' /tmp/troy-dsh-install.sh && sh /tmp/troy-dsh-install.sh && echo 'troy plugin installed — dsh hot-reloads it'`;
 
   // if the selected model was deleted (chosen list no longer contains it), reset so snippets fall back
   useEffect(() => {
@@ -393,7 +401,7 @@ export function ToolsPage() {
             >
               <Switch
                 id="troy-key-switch"
-                checked={keyInfo.data?.on === 1}
+                checked={keyInfo.data?.on ?? false}
                 onCheckedChange={toggleAuth}
                 disabled={!keyInfo.data}
                 aria-label="require troy api key on /v1 requests"

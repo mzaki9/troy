@@ -106,7 +106,7 @@ export interface ProviderCat {
 }
 export interface ApiKeyInfo {
   key: string;
-  on: number;
+  on: boolean;
 }
 
 /** Poll an API endpoint; refetch() forces an immediate reload. */
