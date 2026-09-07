@@ -7,8 +7,9 @@
  * reasoning_effort "high") and OmniRoute's alias-id generation.
  */
 
-/** Aliases accepted after a "-" on a reasoning model id. */
-export const EFFORT_ALIASES = ["minimal", "low", "medium", "high", "max", "xhigh"] as const;
+/** Aliases accepted after a "-" on a reasoning model id. Must stay within the
+ *  server-valid set (low|medium|high|xhigh|max) — anything else 400s. */
+export const EFFORT_ALIASES = ["low", "medium", "high", "max", "xhigh"] as const;
 
 const REASONING: RegExp[] = [
   /^(o1|o3|o4)(-|$)/, // OpenAI o-series

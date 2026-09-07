@@ -151,6 +151,7 @@ describe("routing — every provider through the stub (integrated)", () => {
         if (p.id === "command-code" && k === "x-session-id") {
           expect(header(k), "command-code x-session-id overridden").toBeTruthy();
           expect(header(k), "command-code x-session-id not static").not.toBe(v);
+          expect(header(k), "command-code x-session-id sess_-style").toMatch(/^sess_[0-9a-f]{16}$/);
           continue;
         }
         expect(header(k), `${p.id} static header ${k}`).toBe(v);

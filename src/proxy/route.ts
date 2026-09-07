@@ -162,6 +162,7 @@ async function forward(
   signal?: AbortSignal,
   wantsStream = false,
   opencodeSession?: string,
+  requestId?: string,
 ): Promise<Response> {
   const headers: Record<string, string> = {
     "content-type": "application/json",
@@ -169,7 +170,11 @@ async function forward(
     ...authHeaders(def, conn),
   };
   if (wantsStream || def.id === "command-code" || def.id === "freebuff") headers.accept = "text/event-stream";
-  if (def.id === "command-code") headers["x-session-id"] = crypto.randomUUID();
+  // CLI format is sess_<16 hex> (generateSessionId), stable per harness
+  // session. Troy has no harness session, so one stable id per proxy request
+  // (same header for every account attempted in that request) — never a bare UUID.
+  if (def.id === "command-code")
+    headers["x-session-id"] = `sess_${(requestId ?? crypto.randomUUID()).replace(/-/g, "").slice(0, 16)}`;
   if (opencodeSession && OPENCODE_SESSION_PROVIDERS.has(def.id)) headers["x-opencode-session"] = opencodeSession;
   // explicit content-length for replay determinism (Bun sets it, but be explicit)
   headers["content-length"] = String(Buffer.byteLength(bodyJson, "utf8"));
@@ -431,7 +436,15 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
                 );
             }
             res = await withDeadline(
-              forward(fbJson ?? bodyJson, conn, def, ac.signal, effBody.stream === true, deps.opencodeSession),
+              forward(
+                fbJson ?? bodyJson,
+                conn,
+                def,
+                ac.signal,
+                effBody.stream === true,
+                deps.opencodeSession,
+                deps.requestId,
+              ),
               ttfb,
               ac,
             );
@@ -567,6 +580,18 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
           }
 
           const bodyText = await res.text().catch(() => "");
+          // Upstream 400s are client bugs (bad effort value, malformed
+          // envelope, …), not sick accounts: surface the full body on the
+          // trace line so the next one is diagnosable, and skip cooldown —
+          // fail() ignores 400s for the same reason.
+          if (cc && res.status === 400) {
+            lastRaw = { body: bodyText, status: res.status };
+            deps.onTrace?.(`400 ${circuitKey} — ${bodyText.slice(0, 300)}`);
+            lastError = bodyText || res.statusText || `HTTP ${res.status}`;
+            lastStatus = res.status;
+            excluded.add(conn.id);
+            continue;
+          }
           if (cc) lastRaw = { body: bodyText, status: res.status };
           // freebuff: typed classification → session/run invalidation + server retry hints
           const fbErr = fb ? classifyFreebuffError(res.status, bodyText) : null;

@@ -220,6 +220,10 @@ export class CooldownStore {
     retryAfterMs?: number | null,
     requestId?: string,
   ) {
+    // 400 = client error (bad params, invalid effort value, …). Retrying the
+    // same bytes fails identically, so it must not lock the account or trip
+    // the breaker — otherwise one bad request 503s every later request.
+    if (status === 400) return;
     const s = this.ensure(id);
     const cls = classify(status, errText, s.backoff);
     // server Retry-After wins over local backoff when sane (dsh llm-retry rule)

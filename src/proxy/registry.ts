@@ -50,17 +50,21 @@ export const PROVIDERS: Provider[] = [
     modelsUrl: "https://api.commandcode.ai/provider/v1/models",
     auth: "bearer",
     headers: {
-      // UA/JA3 coherence — exact identity of the real command-code CLI
-      // (command-code@1.26.0 bundle: user-agent `commandcode/0.1.0`,
+      // UA/version coherence — exact identity of the real command-code CLI
+      // (command-code@1.50.0 bundle: `User-Agent: cli`,
       // x-command-code-version = its package version). Never spoof Chrome on
-      // Bun TLS — Cloudflare flags the mismatch as a lying client.
-      "User-Agent": "commandcode/0.1.0",
-      "x-command-code-version": "1.26.0",
-      "x-cli-environment": "external",
+      // Bun TLS — Cloudflare flags the mismatch as a lying client. Keep the
+      // version in sync with CLI releases: stale versions risk rejection.
+      // x-cli-environment is the normalized env ("production", not "prod").
+      // x-co-flag is troy-only — the CLI never sends it, so it fingerprints
+      // the proxy. x-session-id below is only a placeholder: forward()
+      // overrides it per connection with a stable sess_-style id.
+      "User-Agent": "cli",
+      "x-command-code-version": "1.50.0",
+      "x-cli-environment": "production",
       "x-project-slug": "pi-cc",
       "x-taste-learning": "false",
-      "x-co-flag": "false",
-      "x-session-id": "troy-00000000-0000-0000-0000-000000000000",
+      "x-session-id": "sess_0000000000000000",
     },
   } /* alpha/generate works on every subscription tier — /provider/v1/chat/completions 403s on free/basic (same call OmniRoute made) */,
   {

@@ -10,6 +10,8 @@ describe("reasoning (pure combinatorics — kept as unit)", () => {
     expect(isReasoningModel("deepseek-chat")).toBe(false);
     expect(resolveEffortAlias("o3-mini-high")).toEqual({ model: "o3-mini", effort: "high" });
     expect(resolveEffortAlias("gpt-4o-high").effort).toBeUndefined();
+    // "minimal" is not server-valid — the alias must not resolve it.
+    expect(resolveEffortAlias("o3-mini-minimal").effort).toBeUndefined();
     for (const a of ["low", "medium", "high"]) expect(resolveEffortAlias(`o3-mini-${a}`).effort).toBe(a);
   });
 });

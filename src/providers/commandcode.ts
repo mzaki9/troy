@@ -8,8 +8,11 @@
  */
 
 const MAX_TOKENS = 200_000;
+/** CLI default when the caller sets no cap (nk=64e3 in the bundle). */
+const DEFAULT_MAX_TOKENS = 64_000;
+/** Server-valid reasoning_effort values (CLI Jv set). Anything else 400s. */
+const CC_EFFORTS: Record<string, true> = { low: true, medium: true, high: true, xhigh: true, max: true };
 const RESERVED_TOOL_NAMES = new Set(["tool_search"]);
-
 type Obj = Record<string, unknown>;
 
 function isObj(v: unknown): v is Obj {
@@ -27,18 +30,6 @@ function textOf(content: unknown): string {
     .filter((p) => p.type === "text")
     .map((p) => str(p.text))
     .join("\n");
-}
-/** chat `arguments` → the `arguments` string alpha/generate requires */
-function argsString(v: unknown): string {
-  if (isObj(v)) return JSON.stringify(v);
-  if (typeof v === "string" && v.trim()) {
-    try {
-      return isObj(JSON.parse(v)) ? v : "{}";
-    } catch {
-      return "{}";
-    }
-  }
-  return "{}";
 }
 /** alpha/generate `input` field must be an object, not a string */
 function argsObject(v: unknown): Obj {
@@ -127,7 +118,6 @@ export function wrapCommandCode(body: Obj): { body: Obj; toolMap: Map<string, st
   const callIds = new Set<string>();
   const results = new Set<string>();
   const callNames = new Map<string, string>();
-  const callArgs = new Map<string, string>();
   for (const m of src) {
     if (m.role === "assistant") {
       for (const c of asObjArray(m.tool_calls)) {
@@ -136,7 +126,6 @@ export function wrapCommandCode(body: Obj): { body: Obj; toolMap: Map<string, st
         callIds.add(id);
         const fn = isObj(c.function) ? c.function : c;
         callNames.set(id, wire(str(fn.name) || str(c.name)));
-        callArgs.set(id, argsString(fn.arguments));
       }
     } else if (m.role === "tool") {
       const id = str(m.tool_call_id).trim();
@@ -163,19 +152,21 @@ export function wrapCommandCode(body: Obj): { body: Obj; toolMap: Map<string, st
         const id = str(c.id).trim();
         if (!id || !paired.has(id)) continue;
         const fn = isObj(c.function) ? c.function : c;
+        // CLI toWireMessages: tool-call carries the input object only —
+        // no `arguments` string duplicate.
         parts.push({
           type: "tool-call",
           toolCallId: id,
           toolName: wire(str(fn.name) || str(c.name) || "unknown"),
           input: argsObject(fn.arguments),
-          // /alpha/generate rejects a missing `arguments` with a 400
-          arguments: callArgs.get(id) ?? "{}",
         });
       }
       if (parts.length > 0) messages.push({ role: "assistant", content: parts });
     } else if (role === "tool") {
       const id = str(m.tool_call_id).trim();
       if (!id || !paired.has(id)) continue;
+      // CLI toWireToolOutput: tool-result carries output only — no
+      // `arguments` echo of the original call.
       messages.push({
         role: "tool",
         content: [
@@ -183,45 +174,55 @@ export function wrapCommandCode(body: Obj): { body: Obj; toolMap: Map<string, st
             type: "tool-result",
             toolCallId: id,
             toolName: wire(str(m.name) || callNames.get(id) || "unknown"),
-            arguments: callArgs.get(id) ?? "{}",
             output: { type: "text", value: textOf(m.content) },
           },
         ],
       });
     }
   }
-  const explicitSystem = typeof body.system === "string" ? body.system : "";
+  const systemStr = [system.join("\n\n"), typeof body.system === "string" ? body.system : ""]
+    .filter(Boolean)
+    .join("\n\n");
 
+  // CLI tools shape: exactly {name, description, input_schema} — troy's
+  // OpenAI "type: function" wrapper is not on the wire.
   const params: Obj = {
     model: body.model,
     messages,
     tools: asObjArray(body.tools).map((t) => {
       const fn = isObj(t.function) ? t.function : t;
       return {
-        type: "function",
         name: wire(str(fn.name)),
         description: str(fn.description),
         input_schema: isObj(fn.parameters) ? fn.parameters : {},
       };
     }),
-    system: [system.join("\n\n"), explicitSystem].filter(Boolean).join("\n\n"),
+    system: systemStr,
     stream: true,
   };
-  for (const f of ["reasoning_effort", "reasoning", "thinking", "effort", "output_config", "extra_body"]) {
-    const v = body[f];
-    if (v !== undefined && v !== null) params[f] = v;
-  }
+  // CLI sends reasoning_effort only for thinking-capable models, and only
+  // with a server-valid value — anything else 400s ("expected one of
+  // low|medium|high|xhigh|max"). Drop silently otherwise: the request is
+  // valid without it, just runs at default effort.
+  const effort = body.reasoning_effort;
+  if (typeof effort === "string" && CC_EFFORTS[effort]) params.reasoning_effort = effort;
   const maxT = body.max_tokens ?? body.max_completion_tokens;
-  if (typeof maxT === "number" && Number.isFinite(maxT) && maxT > 0)
-    params.max_tokens = Math.min(Math.floor(maxT), MAX_TOKENS);
+  // CLI default is 64k (nk=64e3); troy used to omit the field entirely.
+  params.max_tokens =
+    typeof maxT === "number" && Number.isFinite(maxT) && maxT > 0
+      ? Math.min(Math.floor(maxT), MAX_TOKENS)
+      : DEFAULT_MAX_TOKENS;
 
   return {
     toolMap,
     body: {
+      // CLI buildServerConfig: real cwd/platform/git context. Troy cannot
+      // know the caller's repo, so send the neutral non-git shape with the
+      // normalized production environment — never a fake "/workspace".
       config: {
-        workingDir: "/workspace",
+        workingDir: ".",
         date: new Date().toISOString().slice(0, 10),
-        environment: "external",
+        environment: "production",
         structure: [],
         isGitRepo: false,
         currentBranch: "",
@@ -229,9 +230,10 @@ export function wrapCommandCode(body: Obj): { body: Obj; toolMap: Map<string, st
         gitStatus: "",
         recentCommits: [],
       },
-      memory: "",
-      taste: "",
-      skills: "",
+      // CLI sends nulls here, not empty strings.
+      memory: null,
+      taste: null,
+      skills: null,
       permissionMode: "standard",
       params,
     },

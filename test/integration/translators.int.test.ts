@@ -143,6 +143,7 @@ describe("Anthropic + Responses translation via HTTP (integrated)", () => {
 });
 
 describe("Command-Code via HTTP (integrated)", () => {
+  // In-process mock upstream: no network, no cost. Model ids are labels — cheap ones by convention.
   test("envelope, clamp, reasoning, tool_search, vision, and tool parts", async () => {
     const sse = `data: ${JSON.stringify({ type: "text-delta", text: "ok" })}\n\ndata: ${JSON.stringify({ type: "finish", finishReason: "stop", totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } })}\n\n`;
     t.upstream.setBehavior("cc", { status: 200, headers: { "content-type": "text/event-stream" }, body: sse });
@@ -155,27 +156,26 @@ describe("Command-Code via HTTP (integrated)", () => {
         max_tokens: 500,
       }),
     });
-    expect((t.upstream.getLastPayload() as { params: { model: string; max_tokens: number } }).params.model).toBe(
-      "deepseek-v4-flash",
-    );
+    const first = t.upstream.getLastPayload() as { params: { model: string } };
+    expect(first.params.model).toBe("deepseek-v4-flash");
 
     t.upstream.setBehavior("cc", { status: 200, headers: { "content-type": "text/event-stream" }, body: sse });
     await t.fetch("/v1/chat/completions", {
       method: "POST",
       body: JSON.stringify({
-        model: "command-code/kimi-k2.7",
+        model: "command-code/deepseek-v4-flash",
         messages: [],
         max_tokens: 999999,
         reasoning_effort: "high",
         tools: [{ type: "function", function: { name: "tool_search", description: "x", parameters: {} } }],
       }),
     });
-    const p = t.upstream.getLastPayload() as {
+    const second = t.upstream.getLastPayload() as {
       params: { max_tokens?: number; reasoning_effort?: string; tools: { name: string }[] };
     };
-    expect(p.params.max_tokens).toBe(200000);
-    expect(p.params.reasoning_effort).toBe("high");
-    expect(p.params.tools[0].name).toBe("troy_tool_search");
+    expect(second.params.max_tokens).toBe(200000);
+    expect(second.params.reasoning_effort).toBe("high");
+    expect(second.params.tools[0].name).toBe("troy_tool_search");
 
     const img = [
       { type: "text", text: "look" },
@@ -183,7 +183,7 @@ describe("Command-Code via HTTP (integrated)", () => {
     ];
     await t.fetch("/v1/chat/completions", {
       method: "POST",
-      body: JSON.stringify({ model: "command-code/kimi-k2.7", messages: [{ role: "user", content: img }] }),
+      body: JSON.stringify({ model: "command-code/deepseek-vision", messages: [{ role: "user", content: img }] }),
     });
     expect(JSON.stringify(t.upstream.getLastPayload())).toContain("image");
 
@@ -211,5 +211,39 @@ describe("Command-Code via HTTP (integrated)", () => {
       body: JSON.stringify({ model: "command-code/m", messages: [{ role: "user", content: "hi" }] }),
     });
     expect([502, 200].includes(res.status)).toBe(true);
+  });
+
+  test("invalid reasoning_effort dropped, default max_tokens 64k", async () => {
+    const sse = `data: ${JSON.stringify({ type: "text-delta", text: "ok" })}\n\ndata: ${JSON.stringify({ type: "finish", finishReason: "stop" })}\n\n`;
+    t.upstream.setBehavior("cc", { status: 200, headers: { "content-type": "text/event-stream" }, body: sse });
+    t.addConnection("command-code", "cc");
+    await t.fetch("/v1/chat/completions", {
+      method: "POST",
+      body: JSON.stringify({
+        model: "command-code/deepseek-v4-flash",
+        messages: [{ role: "user", content: "hi" }],
+        reasoning_effort: "minimal",
+      }),
+    });
+    const p = t.upstream.getLastPayload() as { params: { max_tokens?: number; reasoning_effort?: string } };
+    expect(p.params.reasoning_effort).toBeUndefined();
+    expect(p.params.max_tokens).toBe(64000);
+  });
+
+  test("upstream 400 does not lock the account", async () => {
+    t.upstream.setBehavior("cc", { status: 400, body: JSON.stringify({ error: { message: "bad effort" } }) });
+    t.addConnection("command-code", "cc");
+    const bad = await t.fetch("/v1/chat/completions", {
+      method: "POST",
+      body: JSON.stringify({ model: "command-code/m", messages: [{ role: "user", content: "hi" }] }),
+    });
+    expect(bad.status).toBe(400);
+    const sse = `data: ${JSON.stringify({ type: "text-delta", text: "ok" })}\n\ndata: ${JSON.stringify({ type: "finish", finishReason: "stop" })}\n\n`;
+    t.upstream.setBehavior("cc", { status: 200, headers: { "content-type": "text/event-stream" }, body: sse });
+    const good = await t.fetch("/v1/chat/completions", {
+      method: "POST",
+      body: JSON.stringify({ model: "command-code/m", messages: [{ role: "user", content: "hi" }] }),
+    });
+    expect(good.status).toBe(200);
   });
 });
