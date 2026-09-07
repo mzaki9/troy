@@ -14,10 +14,10 @@
 | `TROY_CORS_ORIGINS` | `url.origin` | extra allowed `Origin` for dashboard (`*` otherwise) |
 | `TROY_PUBLIC_URL` | (empty) | canonical origin baked into plugins (needed behind a reverse proxy) |
 | `TROY_ENRICH` | `limits,modalities` | models.dev enrichment layers; `""` disables |
+| `PROVIDER_MODELS_TTL_MS` | `300000` | provider model probe cache TTL (ms) |
 
 In Docker (`docker-compose.yml`) `TROY_DATA` is `/data` (named volume `troy-data`); every other
 var passes through unchanged via `environment:` / `docker run -e`.
-
 ## Proxy endpoints
 
 | Method | Path | Purpose |
@@ -27,7 +27,7 @@ var passes through unchanged via `environment:` / `docker run -e`.
 | POST | `/v1/responses` | OpenAI Responses bridge (Codex CLI) |
 | GET | `/v1/models` | combos (pseudo-models) + saved specs + connected providers |
 | GET | `/v1/models/<spec>` | single model entry |
-| GET | `/healthz` · `/api/healthz` | health check no-auth `{ ok: true }` |
+| GET | `/healthz` · `/api/healthz` · `/api/health` | health check no-auth `{ ok: true }` |
 
 All accept the troy key via `Authorization: Bearer` or `x-api-key` (except `/healthz`).
 
@@ -45,8 +45,12 @@ curl -s http://localhost:31337/v1/messages \
 # health
 curl -s http://localhost:31337/healthz
 ```
+## Dashboard API (`/api/*`)
 
-## Dashboard API (`/api/*`, session login required)
+Auth tiers:
+- **public (no auth):** `GET /healthz`, `GET /api/healthz`, `GET /api/health`, `GET /api/session`, `POST /api/login`, `POST /api/logout`
+- **read-only (session OR troy API key):** `GET /api/models`, `GET /v1/models*`, `GET /api/providers`, `GET /api/modelsdev/status`, `GET /api/providers/:id/models`
+- **session-only:** `GET /api/logs`, `POST /api/models`, `DELETE /api/models/*`, `PUT /api/settings`, `POST /api/password`, `GET/PUT /api/key`, `POST /api/key/rotate`, `GET /api/stats*`, `GET/POST /api/connections`, `PUT/DELETE /api/connections/*`, `GET/POST /api/combos`, `DELETE /api/combos/*`, etc.
 
 ### Sessions & keys
 
@@ -63,7 +67,7 @@ curl -s http://localhost:31337/healthz
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/providers` | full catalog (connected/chosen counts, aliases, placeholders) |
-| GET | `/api/providers/<id>/models` | live model probe (15 s timeout, thinking flags, 502 passthrough) |
+| GET | `/api/providers/<id>/models` | live model probe (15s timeout, thinking flags, 5m cache with stale fallback, x-cache header) |
 | GET / POST | `/api/custom-providers` | list / add custom provider |
 | DELETE | `/api/custom-providers/<id>` | remove (and its connections) |
 | GET / POST | `/api/connections` | list / add accounts |
@@ -91,9 +95,20 @@ curl -s http://localhost:31337/healthz
 | GET | `/api/stats` | totals + by-provider/by-model (requests, ok, avg/p95 latency, tokens, RTK) |
 | GET | `/api/stats/daily?days=N` | daily buckets, 1–30 days (default 7) |
 | GET | `/api/logs?limit=N` | recent request logs (default 50, max 500) |
+## Logging
+
+Structured JSON lines on stdout/stderr with `{ tag, ...fields, ts }`. `TROY_TRACE=1` enables per-request trace.
+
+| TAG | Component | Example |
+|---|---|---|
+| `troy:http` | access log (every request) | `{"tag":"troy:http","status":200,...}` |
+| `troy:auth` | login, session, api-key, password, session sweep | |
+| `troy:proxy` | routing, cooldown/circuit, strategy, auto-ban, TROY_TRACE | |
+| `troy:provider` | upstream provider fetch/probe, stale cache fallback | |
+| `troy:store` | SQLite, WAL, kv, log flush | |
+| `troy:modelsdev` | canonical/provider catalog sync (models.dev) | |
+| `troy:system` | boot, shutdown, GC, unhandled panic | |
 
 ## Static routes
-
-`/` (dashboard), `/app.js`, `/styles.css`, `/favicon.svg`, `/providers/*`, `/assets/*`.
 
 Related: [AUTH.md](AUTH.md) · [CLI.md](CLI.md) · [ERRORS.md](ERRORS.md) · [STORAGE.md](STORAGE.md)

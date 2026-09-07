@@ -14,9 +14,10 @@ Two trust surfaces, kept separate.
 
 ## Dashboard auth
 
-- Login with password → cookie session (`troy_session`: HttpOnly, SameSite=Lax, 30-day TTL,
-  token = 64 hex chars, in-memory store swept hourly)
-- Every `/api/*` route except `session/login/logout` requires login (401 otherwise)
+- `GET /healthz`, `GET /api/healthz`, `GET /api/health`, `GET /api/session`, `POST /api/login`, `POST /api/logout` are public (no auth).
+- Read-only model discovery (`GET /api/models`, `GET /v1/models*`, `GET /api/providers`, `GET /api/modelsdev/status`, `GET /api/providers/:id/models`) accepts session OR troy API key (so headless CLI works without browser session).
+- All other `/api/*` (logs, settings, connections, combos, etc.) require session cookie.
+- `/v1/*` requires troy API key OR session when auth is on (session fallback for dashboard).
 - Default password is `troy123` — shown on the login screen until replaced; the server warns
   on boot while it's still default
 

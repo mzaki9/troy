@@ -31,6 +31,6 @@ All proxy errors are `{ error: { message, type, code } }`. Dashboard API uses `{
 
 FreeBuff specifics (`src/providers/freebuff.ts:346`): `session_superseded` → invalidate + 409, `session_limit_reached`, `account banned` (with `resumes_at`), `waiting room required` 428, `ip capped` 429, `capacity deferred` 503 (+10s).
 
-Health: `GET /healthz` and `GET /api/healthz` always 200 `{ ok: true }` no-auth.
+Health: `GET /healthz` and `GET /api/healthz` and `GET /api/health` always 200 `{ ok: true }` no-auth.
 
 See `src/proxy/stream.ts:42` for `cache-control: no-cache`, `connection: keep-alive`, `x-accel-buffering: no` on streams; `STREAM_BUF_CAP` 64MB (`STREAM_SCANNER_MAX_BUFFER_MB`).

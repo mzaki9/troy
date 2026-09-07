@@ -1,0 +1,389 @@
+{
+  "dashboard/app.tsx": [
+    "./components/app",
+    "react-dom/client"
+  ],
+  "dashboard/components/api.ts": [
+    "react"
+  ],
+  "dashboard/components/app.tsx": [
+    "../dark",
+    "./api",
+    "./login",
+    "./pages/combos",
+    "./pages/providers",
+    "./pages/settings",
+    "./pages/tools",
+    "./pages/usage",
+    "./sidebar",
+    "./topbar",
+    "react"
+  ],
+  "dashboard/components/copy-button.tsx": [
+    "./ui/button",
+    "lucide-react",
+    "react"
+  ],
+  "dashboard/components/login.tsx": [
+    "../dark",
+    "./api",
+    "./ui/button",
+    "./ui/card",
+    "./ui/input",
+    "lucide-react",
+    "react"
+  ],
+  "dashboard/components/pages/combos.tsx": [
+    "../../lib/utils",
+    "../api",
+    "../ui/alert-dialog",
+    "../ui/badge",
+    "../ui/button",
+    "../ui/card",
+    "../ui/command",
+    "../ui/input",
+    "../ui/label",
+    "../ui/popover",
+    "../ui/select",
+    "../ui/skeleton",
+    "lucide-react",
+    "react"
+  ],
+  "dashboard/components/pages/providers.tsx": [
+    "../../lib/utils",
+    "../api",
+    "../copy-button",
+    "../provider-icon",
+    "../ui/alert-dialog",
+    "../ui/badge",
+    "../ui/button",
+    "../ui/card",
+    "../ui/command",
+    "../ui/input",
+    "../ui/label",
+    "../ui/popover",
+    "../ui/select",
+    "../ui/skeleton",
+    "../ui/switch",
+    "lucide-react",
+    "react"
+  ],
+  "dashboard/components/pages/security.tsx": [
+    "../api",
+    "../ui/button",
+    "../ui/card",
+    "../ui/input",
+    "../ui/label",
+    "lucide-react",
+    "react"
+  ],
+  "dashboard/components/pages/settings.tsx": [
+    "../api",
+    "../ui/button",
+    "../ui/card",
+    "../ui/select",
+    "../ui/skeleton",
+    "../ui/switch",
+    "./security",
+    "lucide-react",
+    "react"
+  ],
+  "dashboard/components/pages/tools.tsx": [
+    "../../lib/utils",
+    "../api",
+    "../copy-button",
+    "../ui/badge",
+    "../ui/button",
+    "../ui/card",
+    "../ui/select",
+    "../ui/switch",
+    "lucide-react",
+    "react"
+  ],
+  "dashboard/components/pages/usage.tsx": [
+    "../../lib/utils",
+    "../api",
+    "../provider-icon",
+    "../ui/badge",
+    "../ui/card",
+    "../ui/chart",
+    "../ui/skeleton",
+    "../ui/table",
+    "../ui/tabs",
+    "react",
+    "recharts"
+  ],
+  "dashboard/components/provider-icon.tsx": [
+    "../lib/utils",
+    "react"
+  ],
+  "dashboard/components/sidebar.tsx": [
+    "../lib/utils",
+    "lucide-react",
+    "react"
+  ],
+  "dashboard/components/topbar.tsx": [
+    "../dark",
+    "./sidebar",
+    "./ui/button",
+    "lucide-react",
+    "react"
+  ],
+  "dashboard/components/ui/alert-dialog.tsx": [
+    "../../lib/utils",
+    "./button",
+    "@radix-ui/react-alert-dialog",
+    "react"
+  ],
+  "dashboard/components/ui/badge.tsx": [
+    "../../lib/utils",
+    "@radix-ui/react-slot",
+    "class-variance-authority",
+    "react"
+  ],
+  "dashboard/components/ui/button.tsx": [
+    "../../lib/utils",
+    "@radix-ui/react-slot",
+    "class-variance-authority",
+    "react"
+  ],
+  "dashboard/components/ui/card.tsx": [
+    "../../lib/utils",
+    "react"
+  ],
+  "dashboard/components/ui/chart.tsx": [
+    "../../lib/utils",
+    "react",
+    "recharts"
+  ],
+  "dashboard/components/ui/command.tsx": [
+    "../../lib/utils",
+    "cmdk",
+    "lucide-react",
+    "react"
+  ],
+  "dashboard/components/ui/input.tsx": [
+    "../../lib/utils",
+    "react"
+  ],
+  "dashboard/components/ui/label.tsx": [
+    "../../lib/utils",
+    "@radix-ui/react-label",
+    "react"
+  ],
+  "dashboard/components/ui/popover.tsx": [
+    "../../lib/utils",
+    "@radix-ui/react-popover",
+    "react"
+  ],
+  "dashboard/components/ui/select.tsx": [
+    "../../lib/utils",
+    "@radix-ui/react-select",
+    "lucide-react",
+    "react"
+  ],
+  "dashboard/components/ui/skeleton.tsx": [
+    "../../lib/utils",
+    "react"
+  ],
+  "dashboard/components/ui/switch.tsx": [
+    "../../lib/utils",
+    "@radix-ui/react-switch",
+    "react"
+  ],
+  "dashboard/components/ui/table.tsx": [
+    "../../lib/utils",
+    "react"
+  ],
+  "dashboard/components/ui/tabs.tsx": [
+    "../../lib/utils",
+    "@radix-ui/react-tabs",
+    "react"
+  ],
+  "dashboard/dark.ts": [
+    "react"
+  ],
+  "dashboard/jsx-dev-runtime.shim.ts": [
+    "react/jsx-runtime"
+  ],
+  "dashboard/lib/utils.ts": [
+    "clsx",
+    "tailwind-merge"
+  ],
+  "src/app.ts": [
+    "./dash/auth",
+    "./dash/stats",
+    "./dsh-plugin",
+    "./lib/net",
+    "./logger",
+    "./modelsdev",
+    "./omp-plugin",
+    "./opencode-plugin",
+    "./providers/anthropic",
+    "./providers/freebuff",
+    "./providers/responses",
+    "./proxy/cooldown",
+    "./proxy/rateLimit",
+    "./proxy/registry",
+    "./proxy/route",
+    "./store/db",
+    "bun"
+  ],
+  "src/dash/auth.ts": [
+    "node:crypto"
+  ],
+  "src/dash/stats.ts": [
+    "../modelsdev",
+    "../proxy/registry",
+    "../store/db"
+  ],
+  "src/dsh-plugin.ts": [
+    "node:fs",
+    "node:path"
+  ],
+  "src/lib/net.ts": [],
+  "src/logger.ts": [],
+  "src/modelsdev.ts": [
+    "./logger",
+    "./modelsdev-seed.json",
+    "./providers/reasoning"
+  ],
+  "src/omp-plugin.ts": [
+    "node:fs",
+    "node:path"
+  ],
+  "src/opencode-plugin.ts": [
+    "node:fs",
+    "node:path"
+  ],
+  "src/providers/anthropic.ts": [
+    "../logger",
+    "../proxy/route",
+    "../proxy/stream",
+    "../proxy/types"
+  ],
+  "src/providers/commandcode.ts": [],
+  "src/providers/freebuff.ts": [
+    "node:fs",
+    "node:os"
+  ],
+  "src/providers/inject.ts": [],
+  "src/providers/reasoning.ts": [],
+  "src/providers/responses.ts": [
+    "../logger",
+    "../proxy/route",
+    "../proxy/stream",
+    "../proxy/types"
+  ],
+  "src/proxy/cooldown.ts": [
+    "../store/db"
+  ],
+  "src/proxy/rateLimit.ts": [],
+  "src/proxy/registry.ts": [],
+  "src/proxy/route.ts": [
+    "../lib/net",
+    "../logger",
+    "../modelsdev",
+    "../providers/commandcode",
+    "../providers/freebuff",
+    "../providers/inject",
+    "../providers/reasoning",
+    "../rtk",
+    "../store/db",
+    "./cooldown",
+    "./registry",
+    "./stream",
+    "./types"
+  ],
+  "src/proxy/stream.ts": [],
+  "src/proxy/types.ts": [
+    "../store/db",
+    "./cooldown"
+  ],
+  "src/rtk.ts": [],
+  "src/server.ts": [
+    "./app",
+    "./dash/auth",
+    "./logger",
+    "./modelsdev",
+    "./proxy/cooldown",
+    "./store/db",
+    "node:fs"
+  ],
+  "src/store/db.ts": [
+    "../logger",
+    "../proxy/registry",
+    "./migrations",
+    "bun:sqlite"
+  ],
+  "src/store/migrations.ts": [
+    "bun:sqlite"
+  ],
+  "test/auth.test.ts": [
+    "../src/dash/auth",
+    "../src/store/db",
+    "bun:test",
+    "node:crypto"
+  ],
+  "test/dsh-plugin.test.ts": [
+    "../src/dsh-plugin",
+    "bun:test",
+    "node:fs",
+    "node:path"
+  ],
+  "test/freebuff.test.ts": [
+    "../src/providers/freebuff",
+    "bun:test"
+  ],
+  "test/helpers/troy.ts": [
+    "../../src/app",
+    "../../src/proxy/cooldown",
+    "../../src/store/db",
+    "./upstream"
+  ],
+  "test/helpers/upstream.ts": [],
+  "test/integration/server.int.test.ts": [
+    "../../src/logger",
+    "../helpers/troy",
+    "bun:test"
+  ],
+  "test/integration/translators.int.test.ts": [
+    "../helpers/troy",
+    "bun:test"
+  ],
+  "test/modelsdev.test.ts": [
+    "../src/modelsdev",
+    "../src/modelsdev-seed.json",
+    "bun:test"
+  ],
+  "test/omp-plugin.test.ts": [
+    "../src/omp-plugin",
+    "bun:test",
+    "node:fs",
+    "node:path"
+  ],
+  "test/opencode-plugin.test.ts": [
+    "../src/opencode-plugin",
+    "bun:test",
+    "node:fs",
+    "node:path"
+  ],
+  "test/providers.test.ts": [
+    "../src/proxy/cooldown",
+    "../src/proxy/registry",
+    "../src/proxy/route",
+    "../src/store/db",
+    "bun:test"
+  ],
+  "test/route.test.ts": [
+    "../src/proxy/cooldown",
+    "../src/proxy/registry",
+    "../src/proxy/route",
+    "../src/store/db",
+    "bun:test"
+  ],
+  "test/unit/reasoning.unit.test.ts": [
+    "../../src/providers/reasoning",
+    "bun:test"
+  ]
+}
