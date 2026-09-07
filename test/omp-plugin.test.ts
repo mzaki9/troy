@@ -100,4 +100,30 @@ describe("omp extension (integrated via FS)", () => {
     expect(models.map((m) => m.id).sort()).toEqual(["combo/name", "m/custom"]);
     expect(models.find((m) => m.id === "m/custom")!.reasoning).toBe(true);
   });
+
+  test("baked-empty template honors TROY_BASE_URL / TROY_API_KEY env", async () => {
+    const prevBase = process.env.TROY_BASE_URL;
+    const prevKey = process.env.TROY_API_KEY;
+    process.env.TROY_BASE_URL = "https://env.example.com";
+    process.env.TROY_API_KEY = "sk-env";
+    try {
+      const dir = scratch("env");
+      const { extensionPath } = installOmpPlugin({ baseUrl: "", apiKey: "", agentDir: dir });
+      const factory = (await import(extensionPath)).default as (pi: unknown) => void;
+      let registered: { id: string; opts: { baseUrl: string; apiKey: string } } | null = null;
+      factory({
+        registerProvider: (id: string, opts: unknown) => {
+          registered = { id, opts: opts as never };
+        },
+      });
+      expect(registered!.id).toBe("troy");
+      expect(registered!.opts.baseUrl).toBe("https://env.example.com/v1");
+      expect(registered!.opts.apiKey).toBe("sk-env");
+    } finally {
+      if (prevBase === undefined) delete process.env.TROY_BASE_URL;
+      else process.env.TROY_BASE_URL = prevBase;
+      if (prevKey === undefined) delete process.env.TROY_API_KEY;
+      else process.env.TROY_API_KEY = prevKey;
+    }
+  });
 });

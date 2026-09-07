@@ -9,12 +9,12 @@ import {
   verifyPassword,
 } from "./dash/auth";
 import { modelsList, providerCatalog, stats } from "./dash/stats";
-import { clearDshPlugin, installDshPlugin } from "./dsh-plugin";
+import { clearDshPlugin, installDshPlugin, renderDshInstaller, renderDshPlugin } from "./dsh-plugin";
 import { assertPublicUrl } from "./lib/net";
 import { cLog, httpLog, trace as logTrace, panic, TAG } from "./logger";
 import { enrich, enrichmentStatus } from "./modelsdev";
-import { clearOmpPlugin, installOmpPlugin } from "./omp-plugin";
-import { installOpenCodePlugin } from "./opencode-plugin";
+import { clearOmpPlugin, installOmpPlugin, renderOmpPlugin } from "./omp-plugin";
+import { installOpenCodePlugin, renderOpenCodePlugin } from "./opencode-plugin";
 import { handleMessages } from "./providers/anthropic";
 import { discoverFreebuffToken, getFreebuffSessions, pauseFreebuff } from "./providers/freebuff";
 import { handleResponses } from "./providers/responses";
@@ -524,7 +524,37 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
               (p.startsWith("/api/providers/") && p.endsWith("/models")))
           );
         }
-        if (path.startsWith("/api/") && !isPublic(path, request.method)) {
+        const isPluginDownload = request.method === "GET" && path.startsWith("/api/plugin/");
+        if (isPluginDownload && !authed(request) && !hasValidApiKey(request) && apiAuth.on === 1) {
+          logStructured(401, "login required");
+          return withId(json({ error: "login required" }, 401, { "x-request-id": requestId }));
+        }
+        // Resolve the origin baked into plugins: explicit caller override first,
+        // TROY_PUBLIC_URL (reverse-proxy canonical origin) second, request origin last.
+        // Invalid TROY_PUBLIC_URL is ignored (logged once per request, never fatal).
+        function resolvePublicBase(u: URL): string {
+          const raw = (process.env.TROY_PUBLIC_URL ?? "").trim().replace(/\/+$/, "");
+          if (!raw) return u.origin;
+          if (!/^https?:\/\//.test(raw)) {
+            cLog(TAG.SYSTEM, { msg: "ignoring invalid TROY_PUBLIC_URL", value: raw });
+            return u.origin;
+          }
+          return raw;
+        }
+        // Shared by the install POSTs (JSON body) and plugin GETs (query param):
+        // absent/blank → default, http(s) → stripped base, anything else → null (caller 400s).
+        function resolvePluginBase(raw: unknown, u: URL): string | null {
+          const v = typeof raw === "string" ? raw.trim().replace(/\/+$/, "") : "";
+          if (!v) return resolvePublicBase(u);
+          if (!/^https?:\/\//.test(v)) return null;
+          return v;
+        }
+        function badPluginBaseUrl(): Response {
+          const res = json({ error: "baseUrl must start with http(s)://" }, 400, { "x-request-id": requestId });
+          logStructured(400, "bad baseUrl");
+          return res;
+        }
+        if (path.startsWith("/api/") && !isPublic(path, request.method) && !isPluginDownload) {
           if (isReadOnlyModel(path, request.method)) {
             if (!authed(request) && !hasValidApiKey(request)) {
               logStructured(401, "login required");
@@ -557,6 +587,63 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
             }
           }
         }
+        if (request.method === "GET" && path === "/api/plugin/opencode.ts") {
+          const base = resolvePluginBase(url.searchParams.get("baseUrl"), url);
+          if (base === null) return badPluginBaseUrl();
+          const key = apiAuth.on === 1 ? apiAuth.key : "";
+          const res = new Response(renderOpenCodePlugin(base, key), {
+            status: 200,
+            headers: {
+              "content-type": "text/plain; charset=utf-8",
+              "content-disposition": 'attachment; filename="troy.ts"',
+              "x-request-id": requestId,
+            },
+          });
+          logStructured(200);
+          return res;
+        }
+        if (request.method === "GET" && path === "/api/plugin/dsh.ts") {
+          const base = resolvePluginBase(url.searchParams.get("baseUrl"), url);
+          if (base === null) return badPluginBaseUrl();
+          const key = apiAuth.on === 1 ? apiAuth.key : "";
+          const res = new Response(renderDshPlugin(base, key), {
+            status: 200,
+            headers: {
+              "content-type": "text/plain; charset=utf-8",
+              "content-disposition": 'attachment; filename="troy-dsh.ts"',
+              "x-request-id": requestId,
+            },
+          });
+          logStructured(200);
+          return res;
+        }
+        if (request.method === "GET" && path === "/api/plugin/omp.ts") {
+          const base = resolvePluginBase(url.searchParams.get("baseUrl"), url);
+          if (base === null) return badPluginBaseUrl();
+          const key = apiAuth.on === 1 ? apiAuth.key : "";
+          const res = new Response(renderOmpPlugin(base, key), {
+            status: 200,
+            headers: {
+              "content-type": "text/plain; charset=utf-8",
+              "content-disposition": 'attachment; filename="troy.ts"',
+              "x-request-id": requestId,
+            },
+          });
+          logStructured(200);
+          return res;
+        }
+        if (request.method === "GET" && path === "/api/plugin/dsh.sh") {
+          const base = resolvePluginBase(url.searchParams.get("baseUrl"), url);
+          if (base === null) return badPluginBaseUrl();
+          const key = apiAuth.on === 1 ? apiAuth.key : "";
+          // piped to sh on the target machine, not saved — no attachment disposition
+          const res = new Response(renderDshInstaller(base, key), {
+            status: 200,
+            headers: { "content-type": "text/x-shellscript; charset=utf-8", "x-request-id": requestId },
+          });
+          logStructured(200);
+          return res;
+        }
 
         // troy's own api key — /v1 needs key OR session when auth is on
         if (isV1Path(path, request.method) && apiAuth.on === 1 && !hasValidApiKey(request) && !authed(request)) {
@@ -577,9 +664,12 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
 
         if (path === "/api/install-opencode-plugin" && request.method === "POST") {
           try {
+            const b = await readBody(request);
+            const base = resolvePluginBase((b as { baseUrl?: string } | null)?.baseUrl, url);
+            if (base === null) return badPluginBaseUrl();
             const res = json(
               installOpenCodePlugin({
-                baseUrl: url.origin,
+                baseUrl: base,
                 apiKey: apiAuth.on === 1 ? apiAuth.key : "",
               }),
               200,
@@ -598,9 +688,12 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
 
         if (path === "/api/install-dsh-plugin" && request.method === "POST") {
           try {
+            const b = await readBody(request);
+            const base = resolvePluginBase((b as { baseUrl?: string } | null)?.baseUrl, url);
+            if (base === null) return badPluginBaseUrl();
             const res = json(
               installDshPlugin({
-                baseUrl: url.origin,
+                baseUrl: base,
                 apiKey: apiAuth.on === 1 ? apiAuth.key : "",
               }),
               200,
@@ -632,9 +725,12 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
 
         if (path === "/api/install-omp-plugin" && request.method === "POST") {
           try {
+            const b = await readBody(request);
+            const base = resolvePluginBase((b as { baseUrl?: string } | null)?.baseUrl, url);
+            if (base === null) return badPluginBaseUrl();
             const res = json(
               installOmpPlugin({
-                baseUrl: url.origin,
+                baseUrl: base,
                 apiKey: apiAuth.on === 1 ? apiAuth.key : "",
               }),
               200,

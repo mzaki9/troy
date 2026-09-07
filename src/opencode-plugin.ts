@@ -17,8 +17,8 @@ const TEMPLATE = `/**
  * Registers every chosen model + combo as troy/<model> in OpenCode and
  * refreshes the catalog every 60s, so picking a model in troy's dashboard
  * shows up here without touching any config. Re-install from the dashboard
- * (Tools page) if your troy URL or api key changes, or edit the two lines
- * below.
+ * (Tools page), or override without editing via TROY_BASE_URL / TROY_API_KEY
+ * env vars, or edit the two lines below.
  */
 const BASE_URL = "__TROY_BASE_URL__";
 const API_KEY = __TROY_API_KEY__;

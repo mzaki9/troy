@@ -118,6 +118,15 @@ mkdir -p ~/.omp/agent/extensions
 # honours PI_CODING_AGENT_DIR if set, else ~/.omp/agent
 ```
 
+## Remote install (server on a VPS, plugin on another machine)
+
+The dashboard Tools page has an editable troy server URL plus per-plugin download and copy-install-command
+buttons: paste the copied one-liner once on the target machine and it auto-installs (opencode →
+`~/.config/opencode/plugins/troy.ts`, omp → `~/.omp/agent/extensions/troy.ts`, dsh → `~/.dsh` via pipe-to-sh)
+with no file editing. Installed files also honor `TROY_BASE_URL` / `TROY_API_KEY` env vars without re-installing.
+Behind a reverse proxy, set `TROY_PUBLIC_URL=https://troy.example.com` so plugins bake the public origin by
+default.
+
 All snippets also work with combos (`my-combo` instead of `openai/gpt-4o`); the proxy fans out.
 
 See `dashboard Tools` page for live snippets with your current key.

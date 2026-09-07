@@ -22,8 +22,8 @@ const TEMPLATE = `/**
  * Registers every chosen model + combo as troy/<model> in omp and refreshes
  * the catalog via troy's /v1/models, so picking a model in troy's dashboard
  * shows up here without touching any config. Re-install from the dashboard
- * (Tools page) if your troy URL or api key changes, or edit the two lines
- * below.
+ * (Tools page), or override without editing via TROY_BASE_URL / TROY_API_KEY
+ * env vars, or edit the two lines below.
  */
 const BASE_URL = "__TROY_BASE_URL__";
 const API_KEY = __TROY_API_KEY__;
@@ -61,7 +61,9 @@ function toProviderModel(m) {
 }
 
 export default function (pi) {
-  const base = normalizeBase(BASE_URL);
+  const base = normalizeBase(
+    typeof process !== "undefined" && process.env && process.env.TROY_BASE_URL ? process.env.TROY_BASE_URL : BASE_URL,
+  );
 
   async function fetchDynamicModels(apiKey) {
     const res = await fetch(base + "/models", {
@@ -75,7 +77,7 @@ export default function (pi) {
 
   pi.registerProvider("troy", {
     baseUrl: base,
-    apiKey: API_KEY || undefined,
+    apiKey: (typeof process !== "undefined" && process.env && process.env.TROY_API_KEY) || API_KEY || undefined,
     api: "openai-completions",
     authHeader: true,
     fetchDynamicModels,

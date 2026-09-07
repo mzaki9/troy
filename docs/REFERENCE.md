@@ -12,6 +12,7 @@
 | `TROY_UPSTREAM_TIMEOUT_MS` | `300000` (min 1000) | non-stream request ceiling |
 | `STREAM_SCANNER_MAX_BUFFER_MB` | `64` | per-line SSE buf cap (new-api parity, before OOM) |
 | `TROY_CORS_ORIGINS` | `url.origin` | extra allowed `Origin` for dashboard (`*` otherwise) |
+| `TROY_PUBLIC_URL` | (empty) | canonical origin baked into plugins (needed behind a reverse proxy) |
 | `TROY_ENRICH` | `limits,modalities` | models.dev enrichment layers; `""` disables |
 
 In Docker (`docker-compose.yml`) `TROY_DATA` is `/data` (named volume `troy-data`); every other

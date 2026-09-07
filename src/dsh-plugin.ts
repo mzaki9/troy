@@ -18,8 +18,8 @@ const TEMPLATE = `/**
  * Writes every chosen model + combo as the "troy" route under dsh's llm-pi-ai
  * settings namespace, refreshing every 60s, so picking a model in troy's
  * dashboard shows up in dsh without touching any config. Re-install from the
- * dashboard (Tools page) if your troy URL or api key changes, or edit the two
- * lines below.
+ * dashboard (Tools page), or override without editing via TROY_BASE_URL /
+ * TROY_API_KEY env vars, or edit the two lines below.
  */
 const BASE_URL = "__TROY_BASE_URL__";
 const API_KEY = __TROY_API_KEY__;
@@ -60,11 +60,14 @@ export const name = "troy-catalog";
 export const inject = ["settings"];
 
 export async function apply(ctx) {
-  const base = normalizeBase(BASE_URL);
+  const base = normalizeBase(
+    typeof process !== "undefined" && process.env && process.env.TROY_BASE_URL ? process.env.TROY_BASE_URL : BASE_URL,
+  );
+  const KEY = (typeof process !== "undefined" && process.env && process.env.TROY_API_KEY) || API_KEY;
 
   async function refresh() {
     const res = await fetch(base + "/models", {
-      headers: API_KEY ? { authorization: "Bearer " + API_KEY } : {},
+      headers: KEY ? { authorization: "Bearer " + KEY } : {},
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) throw new Error("troy /models returned " + res.status);
@@ -75,7 +78,7 @@ export async function apply(ctx) {
       displayName: "Troy",
       api: "openai-completions",
       baseURL: base,
-      ...(API_KEY ? { apiKeyEnv: "TROY_API_KEY" } : {}),
+      ...(KEY ? { apiKeyEnv: "TROY_API_KEY" } : {}),
       models,
     };
     // merge-patch into the llm-pi-ai namespace — schema-validated there and
@@ -97,6 +100,79 @@ export function renderDshPlugin(baseUrl: string, apiKey: string): string {
     "__TROY_API_KEY__",
     () => JSON.stringify(apiKey),
   );
+}
+
+/** Delimiter for the plugin heredoc in the remote installer (the rendered plugin must never contain it). */
+const DSH_INSTALL_DELIMITER = "TROY_DSH_PLUGIN_EOF";
+
+/** Single-quote a baked value for POSIX sh (`'` → `'\''`). */
+function shSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Render a POSIX `sh` installer reproducing installDshPlugin on any machine:
+ * plugin file, patch entry, credentials. Pure string builder — served by
+ * GET /api/plugin/dsh.sh for one-copy-paste remote installs. The plugin
+ * source rides in a quoted heredoc; KEY with `'`, `$`, backtick stays intact.
+ */
+export function renderDshInstaller(baseUrl: string, apiKey: string): string {
+  const lines = [
+    "#!/bin/sh",
+    "# troy dsh remote installer (rendered by the dashboard Tools page).",
+    "# Idempotent — a second run changes nothing.",
+    "set -eu",
+    `BASE=${shSingleQuote(baseUrl)}`,
+    `KEY=${shSingleQuote(apiKey)}`,
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: POSIX parameter expansion in generated installer, not a JS template
+    'DSH_HOME="${DSH_HOME:-$HOME/.dsh}"',
+    'PLUGIN="$DSH_HOME/plugins/troy-dsh.ts"',
+    'PATCH="$DSH_HOME/cordis.patch.yml"',
+    'CREDS="$DSH_HOME/.credentials.yaml"',
+    'mkdir -p "$DSH_HOME/plugins"',
+    `cat > "$PLUGIN" <<'${DSH_INSTALL_DELIMITER}'`,
+  ];
+  const out = [...lines, renderDshPlugin(baseUrl, apiKey).replace(/\n+$/, ""), DSH_INSTALL_DELIMITER];
+  out.push(
+    "strip_markers() {",
+    "  # drop our block (trimmed-marker match) and trailing blank lines, so a re-run rebuilds the same bytes",
+    '  awk \'{ line=$0; sub(/^[[:space:]]+/, "", line); sub(/[[:space:]]+$/, "", line); if (line == "# troy-install:start") { skip=1; next } if (line == "# troy-install:end") { skip=0; next } if (!skip) { n++; buf[n]=$0 } } END { while (n > 0 && buf[n] ~ /^[[:space:]]*$/) n--; for (i=1; i<=n; i++) print buf[i] }\' "$1"',
+    "}",
+    'tmp_patch="$PATCH.tmp.$$"',
+    'if [ -f "$PATCH" ]; then',
+    '  strip_markers "$PATCH" > "$tmp_patch" || : > "$tmp_patch"',
+    "else",
+    '  : > "$tmp_patch"',
+    "fi",
+    'if [ -s "$tmp_patch" ]; then',
+    "  printf '\\n' >> \"$tmp_patch\"",
+    "fi",
+    "printf '%s\\n' '# troy-install:start' '- insert:' '    - id: troy' \"      name: '$PLUGIN'\" '# troy-install:end' >> \"$tmp_patch\"",
+    'mv "$tmp_patch" "$PATCH"',
+    'if [ -n "$KEY" ]; then',
+    '  tmp_stripped="$CREDS.strip.$$"',
+    '  tmp_creds="$CREDS.tmp.$$"',
+    '  if [ -f "$CREDS" ]; then',
+    '    strip_markers "$CREDS" > "$tmp_stripped" || : > "$tmp_stripped"',
+    "  else",
+    '    : > "$tmp_stripped"',
+    "  fi",
+    "  if ! grep -q '[^[:space:]]' \"$tmp_stripped\" 2>/dev/null; then",
+    '    printf \'version: 1\\nrefs:\\n  # troy-install:start\\n  TROY_API_KEY: %s\\n  # troy-install:end\\n\' "$KEY" > "$tmp_creds"',
+    "  elif grep -q '^version:' \"$tmp_stripped\" && grep -q '^refs:[[:space:]]*$' \"$tmp_stripped\"; then",
+    '    KEY="$KEY" awk \'{ print; if (!done && $0 ~ /^refs:[[:space:]]*$/) { print "  # troy-install:start"; print "  TROY_API_KEY: " ENVIRON["KEY"]; print "  # troy-install:end"; done=1 } }\' "$tmp_stripped" > "$tmp_creds"',
+    "  else",
+    "    {",
+    "      printf 'version: 1\\nrefs:\\n  # troy-install:start\\n  TROY_API_KEY: %s\\n  # troy-install:end\\n' \"$KEY\"",
+    '      awk \'{ if (length) print "  " $0; else print "" }\' "$tmp_stripped"',
+    '    } > "$tmp_creds"',
+    "  fi",
+    '  rm -f "$tmp_stripped"',
+    '  mv "$tmp_creds" "$CREDS"',
+    '  chmod 600 "$CREDS"',
+    "fi",
+  );
+  return `${out.join("\n")}\n`;
 }
 
 /** `$DSH_HOME` if set, else `~/.dsh`; throws when neither is knowable. */

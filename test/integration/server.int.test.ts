@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { TAG } from "../../src/logger";
 import { cookieHeader, createTestTroy, type TestTroy } from "../helpers/troy";
 
@@ -475,5 +478,57 @@ describe("proxy E2E via HTTP (integrated)", () => {
     ).toBe(200);
     const payload = t.upstream.getLastPayload() as { messages: { role: string; content: string }[] };
     expect(payload.messages.find((m) => m.role === "tool")!.content.length).toBeLessThan(rows.length);
+  });
+});
+
+describe("remote plugin install (integrated)", () => {
+  test("POST baseUrl override, GET downloads with key-or-session auth", async () => {
+    const prevXdg = process.env.XDG_CONFIG_HOME;
+    const xdg = mkdtempSync(join(tmpdir(), "troy-int-xdg-"));
+    process.env.XDG_CONFIG_HOME = xdg;
+    try {
+      // GET renders without touching disk — fresh dir stays empty
+      const get = await t.fetch("/api/plugin/omp.ts?baseUrl=https://troy.example.com");
+      expect(get.status).toBe(200);
+      expect(get.headers.get("content-type")).toContain("text/plain");
+      const body = await get.text();
+      expect(body).toContain('const BASE_URL = "https://troy.example.com"');
+      expect(body).toContain(t.apiKey);
+      expect(readdirSync(xdg)).toEqual([]);
+      // no auth at all → 401, same shape as the session gate
+      const anon = await t.fetch("/api/plugin/omp.ts?baseUrl=https://troy.example.com", { noAuth: true });
+      expect(anon.status).toBe(401);
+      expect(((await anon.json()) as { error: string }).error).toBe("login required");
+      // dashboard session cookie also authorizes the download
+      const { cookie } = await t.login();
+      const viaSession = await fetch(`${t.url}/api/plugin/dsh.sh`, { headers: cookieHeader(cookie) });
+      expect(viaSession.status).toBe(200);
+      expect(viaSession.headers.get("content-type")).toContain("text/x-shellscript");
+      expect(await viaSession.text()).toContain("troy-install:start");
+      // bad query override → 400 with the shared message
+      const badGet = await t.fetch("/api/plugin/omp.ts?baseUrl=ftp://x");
+      expect(badGet.status).toBe(400);
+      expect(((await badGet.json()) as { error: string }).error).toBe("baseUrl must start with http(s)://");
+      // POST override bakes the stripped origin into the written file
+      const post = await fetch(`${t.url}/api/install-opencode-plugin`, {
+        method: "POST",
+        headers: { ...cookieHeader(cookie), "content-type": "application/json" },
+        body: JSON.stringify({ baseUrl: "https://troy.example.com/" }),
+      });
+      expect(post.status).toBe(200);
+      const { path } = (await post.json()) as { path: string };
+      expect(path).toBe(join(xdg, "opencode", "plugins", "troy.ts"));
+      expect(readFileSync(path, "utf8")).toContain('const BASE_URL = "https://troy.example.com"');
+      const badPost = await fetch(`${t.url}/api/install-opencode-plugin`, {
+        method: "POST",
+        headers: { ...cookieHeader(cookie), "content-type": "application/json" },
+        body: JSON.stringify({ baseUrl: "ftp://x" }),
+      });
+      expect(badPost.status).toBe(400);
+      expect(((await badPost.json()) as { error: string }).error).toBe("baseUrl must start with http(s)://");
+    } finally {
+      if (prevXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = prevXdg;
+    }
   });
 });

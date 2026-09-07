@@ -102,4 +102,47 @@ describe("opencode plugin (integrated via FS + fetch mock)", () => {
     c3();
     void mkdirSync;
   });
+
+  test("baked-empty template honors ctx.options baseURL/apiKey override", async () => {
+    const prevBase = process.env.TROY_BASE_URL;
+    const prevKey = process.env.TROY_API_KEY;
+    process.env.TROY_BASE_URL = "https://env.example.com";
+    process.env.TROY_API_KEY = "sk-env";
+    try {
+      const dir = join("/tmp/opencode/troy-plugin-test", `env-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      const { path } = installOpenCodePlugin({ baseUrl: "", apiKey: "", dir });
+      const plugin = (await import(path)).default as { setup: (ctx: unknown) => Promise<() => void> };
+      let sawUrl = "";
+      let sawAuth: string | undefined;
+      (globalThis as { fetch: unknown }).fetch = async (url: unknown, init?: RequestInit) => {
+        sawUrl = String(url);
+        sawAuth = new Headers(init?.headers).get("authorization") ?? undefined;
+        return Response.json({ object: "list", data: [{ id: "openai/gpt-4o", custom: true }] });
+      };
+      let providerFn: ((i: Record<string, unknown>) => void) | null = null;
+      const cleanup = await plugin.setup({
+        options: { baseURL: process.env.TROY_BASE_URL, apiKey: process.env.TROY_API_KEY },
+        catalog: {
+          transform: async (fn: (c: Record<string, unknown>) => void) =>
+            fn({
+              provider: { update: (_id: string, fn: (i: Record<string, unknown>) => void) => (providerFn = fn) },
+              model: { update: () => {} },
+            }),
+        },
+      } as unknown as never);
+      const info: Record<string, unknown> = {};
+      providerFn!(info);
+      expect(sawUrl).toBe("https://env.example.com/v1/models");
+      expect(sawAuth).toBe("Bearer sk-env");
+      expect(info).toMatchObject({
+        settings: { baseURL: "https://env.example.com/v1", apiKey: "sk-env" },
+      });
+      cleanup();
+    } finally {
+      if (prevBase === undefined) delete process.env.TROY_BASE_URL;
+      else process.env.TROY_BASE_URL = prevBase;
+      if (prevKey === undefined) delete process.env.TROY_API_KEY;
+      else process.env.TROY_API_KEY = prevKey;
+    }
+  });
 });

@@ -226,6 +226,22 @@ export function ToolsPage() {
   const [dshMsg, setDshMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [installingOmp, setInstallingOmp] = useState(false);
   const [ompMsg, setOmpMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // Server URL baked into plugins — editable for VPS/reverse-proxy setups, remembered per browser.
+  const [troyUrl, setTroyUrl] = useState(() => {
+    try {
+      return localStorage.getItem("troy-plugin-base-url") || location.origin;
+    } catch {
+      return location.origin;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("troy-plugin-base-url", troyUrl);
+    } catch {
+      // private mode — the field still works for this session
+    }
+  }, [troyUrl]);
+  const troyUrlValid = /^https?:\/\//.test(troyUrl.trim());
   const logs = useApi<LogRow[]>("/api/logs?limit=100", { interval: 10000 });
   const saved = useApi<SavedModel[]>("/api/models", { interval: 3000 });
   const combos = useApi<Combo[]>("/api/combos", { interval: 5000 });
@@ -239,6 +255,11 @@ export function ToolsPage() {
   const model = selectedModel && validIds.has(selectedModel) ? selectedModel : fallbackModel;
   const activeCombo = comboMap.get(model) ?? null;
   const key = keyInfo.data?.key ?? KEY_PLACEHOLDER;
+  const troyUrlParam = encodeURIComponent(troyUrl);
+  const keyFlag = keyInfo.data?.on === 1 ? ` -H "Authorization: Bearer ${key}"` : "";
+  const opencodeCmd = `mkdir -p ~/.config/opencode/plugins && curl -sSL${keyFlag} '${base}/api/plugin/opencode.ts?baseUrl=${troyUrlParam}' -o ~/.config/opencode/plugins/troy.ts && echo 'troy plugin installed — restart OpenCode'`;
+  const ompCmd = `mkdir -p ~/.omp/agent/extensions && curl -sSL${keyFlag} '${base}/api/plugin/omp.ts?baseUrl=${troyUrlParam}' -o ~/.omp/agent/extensions/troy.ts && echo 'troy extension installed — restart omp'`;
+  const dshCmd = `curl -sSL${keyFlag} '${base}/api/plugin/dsh.sh?baseUrl=${troyUrlParam}' | sh && echo 'troy plugin installed — dsh hot-reloads it'`;
 
   // if the selected model was deleted (chosen list no longer contains it), reset so snippets fall back
   useEffect(() => {
@@ -283,7 +304,10 @@ export function ToolsPage() {
     setInstalling(true);
     setPluginMsg(null);
     try {
-      const res = await api<{ path: string }>("/api/install-opencode-plugin", { method: "POST" });
+      const res = await api<{ path: string }>("/api/install-opencode-plugin", {
+        method: "POST",
+        body: JSON.stringify({ baseUrl: troyUrl }),
+      });
       setPluginMsg({
         ok: true,
         text: `installed → ${res.path} — restart OpenCode, then pick any troy/… model (list stays live)`,
@@ -298,7 +322,10 @@ export function ToolsPage() {
     setInstallingDsh(true);
     setDshMsg(null);
     try {
-      const res = await api<{ pluginPath: string }>("/api/install-dsh-plugin", { method: "POST" });
+      const res = await api<{ pluginPath: string }>("/api/install-dsh-plugin", {
+        method: "POST",
+        body: JSON.stringify({ baseUrl: troyUrl }),
+      });
       setDshMsg({
         ok: true,
         text: `installed → ${res.pluginPath} — DeepSeek Harness hot-loads it; open Settings → Models and pick a troy/… model`,
@@ -314,7 +341,10 @@ export function ToolsPage() {
     setInstallingOmp(true);
     setOmpMsg(null);
     try {
-      const res = await api<{ extensionPath: string }>("/api/install-omp-plugin", { method: "POST" });
+      const res = await api<{ extensionPath: string }>("/api/install-omp-plugin", {
+        method: "POST",
+        body: JSON.stringify({ baseUrl: troyUrl }),
+      });
       setOmpMsg({
         ok: true,
         text: `installed → ${res.extensionPath} — restart omp, then pick any troy/… model (list stays live)`,
@@ -373,6 +403,17 @@ export function ToolsPage() {
           </div>
           <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2">
             <PlugZap className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="text-[11px] font-medium">troy server URL</span>
+            <input
+              value={troyUrl}
+              onChange={(e) => setTroyUrl(e.target.value)}
+              spellCheck={false}
+              aria-label="troy server URL baked into plugins"
+              className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1 font-mono text-[11px]"
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2">
+            <PlugZap className="size-3.5 shrink-0 text-muted-foreground" />
             <span className="text-[11px] font-medium">OpenCode plugin</span>
             <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
               live model list in OpenCode — no snippet copying, new picks appear automatically
@@ -387,6 +428,20 @@ export function ToolsPage() {
               <PlugZap className="size-3" />
               {installing ? "installing…" : "install"}
             </Button>
+            <Button variant="outline" size="sm" className="h-6 gap-1 px-2 text-[11px]" asChild>
+              <a href={`${base}/api/plugin/opencode.ts?baseUrl=${troyUrlParam}`} download="troy.ts">
+                download
+              </a>
+            </Button>
+            <CopyButton
+              what="opencode-remote"
+              text={opencodeCmd}
+              label="copy opencode remote install command"
+              disabled={!troyUrlValid}
+              onCopied={() =>
+                setPluginMsg({ ok: true, text: "install command copied — paste in a terminal on any machine" })
+              }
+            />
           </div>
           <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2">
             <PlugZap className="size-3.5 shrink-0 text-muted-foreground" />
@@ -404,6 +459,20 @@ export function ToolsPage() {
               <PlugZap className="size-3" />
               {installingDsh ? "installing…" : "install"}
             </Button>
+            <Button variant="outline" size="sm" className="h-6 gap-1 px-2 text-[11px]" asChild>
+              <a href={`${base}/api/plugin/dsh.sh?baseUrl=${troyUrlParam}`} download="troy-dsh-install.sh">
+                download
+              </a>
+            </Button>
+            <CopyButton
+              what="dsh-remote"
+              text={dshCmd}
+              label="copy dsh remote install command"
+              disabled={!troyUrlValid}
+              onCopied={() =>
+                setDshMsg({ ok: true, text: "install command copied — paste in a terminal on any machine" })
+              }
+            />
           </div>
           <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2">
             <PlugZap className="size-3.5 shrink-0 text-muted-foreground" />
@@ -421,7 +490,25 @@ export function ToolsPage() {
               <PlugZap className="size-3" />
               {installingOmp ? "installing…" : "install"}
             </Button>
+            <Button variant="outline" size="sm" className="h-6 gap-1 px-2 text-[11px]" asChild>
+              <a href={`${base}/api/plugin/omp.ts?baseUrl=${troyUrlParam}`} download="troy.ts">
+                download
+              </a>
+            </Button>
+            <CopyButton
+              what="omp-remote"
+              text={ompCmd}
+              label="copy omp remote install command"
+              disabled={!troyUrlValid}
+              onCopied={() =>
+                setOmpMsg({ ok: true, text: "install command copied — paste in a terminal on any machine" })
+              }
+            />
           </div>
+          <p className="text-[11px] text-muted-foreground">
+            install writes to this machine; download / copy installs onto any machine — the troy api key is embedded in
+            the command, rotate it here anytime.
+          </p>
           {pluginMsg ? (
             <p
               className={cn(
