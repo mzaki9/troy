@@ -88,33 +88,38 @@ describe("bridge image mapping", () => {
     const msgs = body.messages as { content: unknown }[];
     expect(JSON.stringify(msgs[0].content)).toContain("data:image/png;base64,AAA");
   });
-  test("command-code vision keeps ai-sdk image, non-vision errors", () => {
-    const vision = wrapCommandCode({
-      model: "command-code/deepseek-vision",
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: "look" },
-            { type: "image", image: "data:image/png;base64,AAA" },
-          ],
-        },
-      ],
-    });
+  test("command-code vision flag comes from caller (models.dev), non-vision errors", () => {
+    const img = [
+      { type: "text", text: "look" },
+      { type: "image", image: "data:image/png;base64,AAA" },
+    ];
+    const vision = wrapCommandCode(
+      {
+        model: "command-code/anything-vision",
+        messages: [{ role: "user", content: img }],
+      },
+      true,
+    );
     expect(vision.error).toBeUndefined();
     expect(JSON.stringify(vision.body)).toContain("data:image/png;base64,AAA");
-    const plain = wrapCommandCode({
-      model: "command-code/mimo-v2.5-pro",
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: "look" },
-            { type: "image_url", image_url: { url: "data:image/png;base64,AAA" } },
-          ],
-        },
-      ],
-    });
+    const plain = wrapCommandCode(
+      {
+        model: "command-code/anything-plain",
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: "look" }, { type: "image_url", image_url: { url: "data:image/png;base64,AAA" } }],
+          },
+        ],
+      },
+      false,
+    );
     expect(plain.error).toContain("does not support image input");
+    // unknown models fail open: default vision=true passes images through
+    const open = wrapCommandCode({
+      model: "command-code/anything-unknown",
+      messages: [{ role: "user", content: img }],
+    });
+    expect(open.error).toBeUndefined();
   });
 });

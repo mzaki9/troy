@@ -48,19 +48,9 @@ function argsObject(v: unknown): Obj {
   return {};
 }
 
-// ponytail: no shared isVisionModelId heuristic in troy — CC-specific patterns
-// + a short generic fallback. Add the shared helper if more providers need it.
-const CC_VISION_PATTERNS: RegExp[] = [/kimi-k2/i, /qwen3\.\d/i, /step-?3/i, /claude-fable/i, /gpt-5/i, /fugu/i];
-const GENERIC_VISION =
-  /(^|[-/])(gpt-4o|gpt-4\.1|o3|o4|claude-3|claude-4|gemini-[23]|minimax-m3|mistral-medium-3|vision|multimodal)/i;
-
-function isVisionModel(model: string): boolean {
-  if (/(?:^|\/)mimo-v2\.5-pro$/i.test(model)) return false;
-  if (/(?:^|\/)mimo-v2\.5$/i.test(model)) return true;
-  if (/(?:^|\/)mimo-v2-omni$/i.test(model)) return true;
-  if (CC_VISION_PATTERNS.some((p) => p.test(model))) return true;
-  return GENERIC_VISION.test(model);
-}
+// Vision capability comes from models.dev enrichment (route passes
+// meta.attachment). No hardcoded model list here — the seed goes stale
+// (e.g. new vision models) and every hardcoded entry is a future bug.
 
 /** user content → text string (non-vision) or CC parts incl. images (vision).
  *  Non-vision models throw: the caller surfaces this as a 400 instead of
@@ -82,8 +72,10 @@ export function userContent(content: unknown, vision: boolean): string | unknown
 
 /** chat body → alpha/generate envelope. Returns body + tool-name reverse map.
  *  `error` is set (and body is empty) when a non-vision model receives image
- *  input — the route surfaces it as a 400 instead of dropping the image. */
-export function wrapCommandCode(body: Obj): { body: Obj; toolMap: Map<string, string>; error?: string } {
+ *  input — the route surfaces it as a 400 instead of dropping the image.
+ *  `vision` is models.dev attachment for the target spec (route-computed) —
+ *  the only vision signal; unknown models fail open (true) like preflight. */
+export function wrapCommandCode(body: Obj, vision = true): { body: Obj; toolMap: Map<string, string>; error?: string } {
   const toolMap = new Map<string, string>();
   const wire = (name: string): string => {
     if (RESERVED_TOOL_NAMES.has(name)) {
@@ -113,7 +105,6 @@ export function wrapCommandCode(body: Obj): { body: Obj; toolMap: Map<string, st
     }
   }
   const paired = new Set([...callIds].filter((id) => results.has(id)));
-  const vision = isVisionModel(str(body.model));
 
   const messages: Obj[] = [];
   const system: string[] = [];

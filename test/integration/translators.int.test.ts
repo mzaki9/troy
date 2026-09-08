@@ -181,9 +181,11 @@ describe("Command-Code via HTTP (integrated)", () => {
       { type: "text", text: "look" },
       { type: "image_url", image_url: { url: "https://x/y.png" } },
     ];
+    // vision flag is models.dev-driven now: seed canonical lists image input
+    // for muse-spark-1.3, so the bridge passes it through (fail-open).
     await t.fetch("/v1/chat/completions", {
       method: "POST",
-      body: JSON.stringify({ model: "command-code/deepseek-vision", messages: [{ role: "user", content: img }] }),
+      body: JSON.stringify({ model: "command-code/meta/muse-spark-1.3", messages: [{ role: "user", content: img }] }),
     });
     expect(JSON.stringify(t.upstream.getLastPayload())).toContain("image");
 

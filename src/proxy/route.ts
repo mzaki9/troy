@@ -312,7 +312,10 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
       const cc = def.id === "command-code";
       // freebuff speaks chat completions but needs the CLI envelope + a free session
       const fb = def.id === "freebuff";
-      const wrapped = cc ? wrapCommandCode(effBody) : null;
+      // vision signal mirrors preflight: only provider-exact metadata gates.
+      // Canonical/seed flags go stale (new vision models), so fail open and
+      // let upstream decide — same rule, single source (models.dev).
+      const wrapped = cc ? wrapCommandCode(effBody, meta.source === "provider" ? meta.attachment : true) : null;
       if (wrapped?.error) return openaiError(400, wrapped.error, deps.requestId);
       const bodyJson = wrapped ? JSON.stringify(wrapped.body) : effBodyStr;
       let accounts: Connection[];
