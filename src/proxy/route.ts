@@ -33,7 +33,7 @@ import {
   usageOf,
   withDeadline,
 } from "./stream";
-import type { ChatDeps } from "./types";
+import type { ChatDeps, OpencodeContext } from "./types";
 
 /** per-account in-flight cap — one hot account may not eat all parallelism */
 const MAX_INFLIGHT_PER_CONN = Math.max(1, Number(process.env.TROY_MAX_INFLIGHT ?? 10));
@@ -137,19 +137,17 @@ export function authHeaders(def: Provider, conn: Connection): Record<string, str
   return headers;
 }
 
-/** Providers that support opencode session-affinity prompt-cache routing. Scoped
- *  to opencode zen + opencode-go only — no other upstream gets this header. */
+/** Providers that support opencode2 session-affinity prompt-cache routing. Scoped
+ *  to opencode zen + opencode-go only — no other upstream gets these headers. */
 export const OPENCODE_SESSION_PROVIDERS = new Set(["opencode", "opencode-go"]);
 
-/** Pick the session value to send as x-opencode-session: prefer the native
- *  header, fall back to OpenCode's generic affinity headers. Sanitized to a
- *  single header-safe line, clamped to 128 chars. */
-export function extractOpencodeSession(request: Request): string | undefined {
-  const raw =
-    request.headers.get("x-opencode-session")?.trim() ||
-    request.headers.get("x-session-affinity")?.trim() ||
-    request.headers.get("x-session-id")?.trim() ||
-    undefined;
+/** opencode2 default User-Agent — ku(e)=>`opencode/${e.channel}/${e.version}/${e.name}`
+ *  with the values baked into opencode2 beta-19242 (Pr/Ys/Vp). Env override
+ *  for version drift; incoming caller UA wins when present. */
+export const OPENCODE_DEFAULT_UA = "opencode/beta/0.0.0-beta-19242/cli";
+export const OPENCODE_DEFAULT_CLIENT = "cli";
+
+function cleanHeader(raw: string | null | undefined): string | undefined {
   if (!raw) return undefined;
   const clean = raw
     .replace(/[\r\n]+/g, "")
@@ -158,13 +156,57 @@ export function extractOpencodeSession(request: Request): string | undefined {
   return clean || undefined;
 }
 
+function synthSession(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return `ses_${[...bytes].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/** Extract the opencode2 V2 header context from the incoming request.
+ *  Session prefers the native header, falls back to the generic affinity
+ *  headers any caller sends; missing session/client/UA are synthesized. */
+export function extractOpencodeSession(request: Request): OpencodeContext {
+  const session =
+    cleanHeader(request.headers.get("x-opencode-session")) ??
+    cleanHeader(request.headers.get("x-session-affinity")) ??
+    cleanHeader(request.headers.get("x-session-id")) ??
+    synthSession();
+  const client =
+    cleanHeader(request.headers.get("x-opencode-client")) ??
+    cleanHeader(process.env.OPENCODE_CLIENT) ??
+    OPENCODE_DEFAULT_CLIENT;
+  const userAgent =
+    cleanHeader(request.headers.get("user-agent")) ??
+    cleanHeader(process.env.TROY_OPENCODE_UA) ??
+    OPENCODE_DEFAULT_UA;
+  const project = cleanHeader(request.headers.get("x-opencode-project"));
+  const parent = cleanHeader(request.headers.get("x-parent-session-id"));
+  return { session, client, userAgent, ...(project ? { project } : {}), ...(parent ? { parent } : {}) };
+}
+
+/** Build the opencode2 V2 upstream header set — mirrors ox() verbatim:
+ *  all three session headers carry the same value, project/parent only
+ *  when present. */
+export function opencodeHeaders(ctx: OpencodeContext): Record<string, string> {
+  const headers: Record<string, string> = {
+    "x-session-affinity": ctx.session,
+    "X-Session-Id": ctx.session,
+    "x-opencode-session": ctx.session,
+    "User-Agent": ctx.userAgent,
+    "x-opencode-client": ctx.client,
+  };
+  if (ctx.project) headers["x-opencode-project"] = ctx.project;
+  if (ctx.parent) headers["x-parent-session-id"] = ctx.parent;
+  return headers;
+}
+
 async function forward(
   bodyJson: string,
   conn: Connection,
   def: Provider,
   signal?: AbortSignal,
   wantsStream = false,
-  opencodeSession?: string,
+  opencode?: OpencodeContext,
   requestId?: string,
 ): Promise<Response> {
   const headers: Record<string, string> = {
@@ -178,7 +220,7 @@ async function forward(
   // (same header for every account attempted in that request) — never a bare UUID.
   if (def.id === "command-code")
     headers["x-session-id"] = `sess_${(requestId ?? crypto.randomUUID()).replace(/-/g, "").slice(0, 16)}`;
-  if (opencodeSession && OPENCODE_SESSION_PROVIDERS.has(def.id)) headers["x-opencode-session"] = opencodeSession;
+  if (opencode && OPENCODE_SESSION_PROVIDERS.has(def.id)) Object.assign(headers, opencodeHeaders(opencode));
   // explicit content-length for replay determinism (Bun sets it, but be explicit)
   headers["content-length"] = String(Buffer.byteLength(bodyJson, "utf8"));
   const target = buildBaseUrl(def, conn);
@@ -453,7 +495,7 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
                 def,
                 ac.signal,
                 effBody.stream === true,
-                deps.opencodeSession,
+                deps.opencode,
                 deps.requestId,
               ),
               ttfb,

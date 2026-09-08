@@ -154,7 +154,7 @@ function cors(request: Request, url?: URL): Response {
       "access-control-allow-origin": origin,
       "access-control-allow-methods": "GET,POST,PUT,DELETE,OPTIONS",
       "access-control-allow-headers":
-        "content-type,authorization,x-api-key,x-opencode-session,x-session-affinity,x-session-id,x-request-id",
+        "content-type,authorization,x-api-key,x-opencode-session,x-opencode-client,x-opencode-project,x-session-affinity,x-session-id,x-parent-session-id,x-request-id",
       "access-control-max-age": "86400",
     },
   });
@@ -304,7 +304,7 @@ export function buildTroyServer(opts: BuildOptions): TroyServer {
       ponytailLevel: settings.ponytail_level,
       signal: request.signal,
       requestId: requestId ?? "",
-      opencodeSession: extractOpencodeSession(request),
+      opencode: extractOpencodeSession(request),
       onLog: (row) => store.logRequest(row),
       onTrace: traceEnabled ? trace : undefined,
     };

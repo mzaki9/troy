@@ -16,6 +16,21 @@ export interface LogRow {
   request_id?: string | null;
 }
 
+/** opencode2 V2 header context for opencode/opencode-go prompt-cache routing.
+ *  Mirrors the opencode2 binary builder verbatim:
+ *  ox=(e,t)=>({"x-session-affinity":e.id,"X-Session-Id":e.id,...e.parentID?{"x-parent-session-id":e.parentID}:{},
+ *  "User-Agent":ku(t),"x-opencode-project":e.projectID,"x-opencode-session":e.id,"x-opencode-client":t.name})
+ *  with ku(e)=>`opencode/${e.channel}/${e.version}/${e.name}`.
+ *  session/client/userAgent always resolved (synthesized when the caller
+ *  sends none); project/parent forwarded only when present. */
+export interface OpencodeContext {
+  session: string;
+  client: string;
+  userAgent: string;
+  project?: string;
+  parent?: string;
+}
+
 export interface ChatDeps {
   store: Store;
   cooldowns: CooldownStore;
@@ -25,8 +40,7 @@ export interface ChatDeps {
   ponytailLevel: string;
   signal?: AbortSignal;
   requestId?: string;
-  /** Session-affinity value for opencode/opencode-go prompt-cache routing (x-opencode-session). */
-  opencodeSession?: string;
+  opencode?: OpencodeContext;
   onLog: (row: LogRow) => void;
   /** optional terminal trace for routing decisions (TROY_TRACE=1) */
   onTrace?: (line: string) => void;
