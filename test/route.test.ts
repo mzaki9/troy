@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { __setProviderCatalogForTests } from "../src/modelsdev";
 import { CooldownStore, parseRetryAfter } from "../src/proxy/cooldown";
 import { registerCustomProvider, unregisterCustomProvider } from "../src/proxy/registry";
 import { type ChatDeps, handleChat, type LogRow } from "../src/proxy/route";
@@ -330,6 +331,8 @@ describe("cooldown + preflight (integrated)", () => {
     );
     expect(r1.status).toBe(503);
     expect(await r1.text()).toContain("preflight: no tools");
+    // vision preflight fails open on canonical metadata (stale flags) — the
+    // request reaches upstream instead of 503ing on a bad seed entry.
     const r2 = await handleChat(
       {
         model: "openai/gpt-3.5-turbo",
@@ -345,7 +348,38 @@ describe("cooldown + preflight (integrated)", () => {
       },
       ctx.deps,
     );
-    expect(r2.status).toBe(503);
+    expect(r2.status).toBe(200);
+    // provider-exact metadata still gates: attachment=false skips with 503.
+    __setProviderCatalogForTests({
+      openai: { models: { "gpt-3.5-turbo": { modalities: { input: ["text"] } } } },
+    });
+    const r2b = await handleChat(
+      {
+        model: "openai/gpt-3.5-turbo",
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "look" },
+              { type: "image_url", image_url: { url: "data:image/png;base64,x" } },
+            ],
+          },
+        ],
+      },
+      ctx.deps,
+    );
+    expect(r2b.status).toBe(503);
+    expect(await r2b.text()).toContain("preflight: no vision");
+    __setProviderCatalogForTests({});
+    // mentioning image_url in plain text is not vision — no preflight skip.
+    const r2c = await handleChat(
+      {
+        model: "openai/gpt-3.5-turbo",
+        messages: [{ role: "user", content: "tell me about image_url handling" }],
+      },
+      ctx.deps,
+    );
+    expect(r2c.status).toBe(200);
     expect(
       (
         await handleChat(

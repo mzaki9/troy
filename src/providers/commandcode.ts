@@ -13,6 +13,9 @@ const DEFAULT_MAX_TOKENS = 64_000;
 /** Server-valid reasoning_effort values (CLI Jv set). Anything else 400s. */
 const CC_EFFORTS: Record<string, true> = { low: true, medium: true, high: true, xhigh: true, max: true };
 const RESERVED_TOOL_NAMES = new Set(["tool_search"]);
+
+import { splitContent } from "./images";
+
 type Obj = Record<string, unknown>;
 
 function isObj(v: unknown): v is Obj {
@@ -26,9 +29,9 @@ function str(v: unknown): string {
 }
 function textOf(content: unknown): string {
   if (typeof content === "string") return content;
-  return asObjArray(content)
-    .filter((p) => p.type === "text")
-    .map((p) => str(p.text))
+  return splitContent(content)
+    .filter((p) => p.kind === "text")
+    .map((p) => p.text)
     .join("\n");
 }
 /** alpha/generate `input` field must be an object, not a string */
@@ -59,51 +62,28 @@ function isVisionModel(model: string): boolean {
   return GENERIC_VISION.test(model);
 }
 
-/** OpenAI image_url / CC {type:"image",image} / AI-SDK / Anthropic source block → URL */
-function extractImageUrl(part: Obj): string | undefined {
-  if (part.type === "image") {
-    const direct = str(part.image);
-    if (direct) return direct;
-    const source = isObj(part.source) ? part.source : null;
-    if (source) {
-      if (source.type === "base64") {
-        const mediaType = str(source.media_type) || "image/png";
-        const data = str(source.data);
-        if (data) return `data:${mediaType};base64,${data}`;
-      }
-      if (source.type === "url") {
-        const url = str(source.url);
-        if (url) return url;
-      }
-    }
-    return undefined;
-  }
-  if (part.type === "image_url") {
-    if (isObj(part.image_url)) return str(part.image_url.url);
-    return str(part.image_url);
-  }
-  return undefined;
-}
-
-/** user content → text string (non-vision) or CC parts incl. images (vision) */
-function userContent(content: unknown, vision: boolean): string | unknown[] {
-  if (!vision || typeof content === "string") return textOf(content);
+/** user content → text string (non-vision) or CC parts incl. images (vision).
+ *  Non-vision models throw: the caller surfaces this as a 400 instead of
+ *  silently dropping the image (9router issue #425 class of bug). */
+export function userContent(content: unknown, vision: boolean): string | unknown[] {
+  if (typeof content === "string") return content;
   const parts: unknown[] = [];
-  for (const part of asObjArray(content)) {
-    if (part.type === "text") {
-      const t = str(part.text);
-      if (t) parts.push({ type: "text", text: t });
+  for (const part of splitContent(content)) {
+    if (part.kind === "text") {
+      if (part.text) parts.push({ type: "text", text: part.text });
       continue;
     }
-    const url = extractImageUrl(part);
-    if (url) parts.push({ type: "image", image: url });
+    if (!vision) throw new Error("model does not support image input — pick a vision-capable model");
+    parts.push({ type: "image", image: part.image.url });
   }
   if (parts.length === 0) parts.push({ type: "text", text: "" }); // CC rejects empty content
   return parts;
 }
 
-/** chat body → alpha/generate envelope. Returns body + tool-name reverse map. */
-export function wrapCommandCode(body: Obj): { body: Obj; toolMap: Map<string, string> } {
+/** chat body → alpha/generate envelope. Returns body + tool-name reverse map.
+ *  `error` is set (and body is empty) when a non-vision model receives image
+ *  input — the route surfaces it as a 400 instead of dropping the image. */
+export function wrapCommandCode(body: Obj): { body: Obj; toolMap: Map<string, string>; error?: string } {
   const toolMap = new Map<string, string>();
   const wire = (name: string): string => {
     if (RESERVED_TOOL_NAMES.has(name)) {
@@ -143,7 +123,11 @@ export function wrapCommandCode(body: Obj): { body: Obj; toolMap: Map<string, st
       const t = textOf(m.content);
       if (t) system.push(t);
     } else if (role === "user") {
-      messages.push({ role: "user", content: userContent(m.content, vision) });
+      try {
+        messages.push({ role: "user", content: userContent(m.content, vision) });
+      } catch (e) {
+        return { body: {}, toolMap, error: e instanceof Error ? e.message : "image input not supported" };
+      }
     } else if (role === "assistant") {
       const parts: Obj[] = [];
       const text = textOf(m.content);

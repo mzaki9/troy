@@ -3,6 +3,7 @@ import { panic, TAG } from "../logger";
 import { handleChat } from "../proxy/route";
 import { sseTranslate } from "../proxy/stream";
 import type { ChatDeps } from "../proxy/types";
+import { extractImage } from "./images";
 
 /**
  * /v1/responses bridge (Codex CLI, Feb 2026+ removed `wire_api = "chat"`).
@@ -34,12 +35,27 @@ export function inputToMessages(input: unknown, instructions: unknown): Record<s
     };
     if (it.type === "message") {
       const role = it.role === "assistant" ? "assistant" : "user";
+      // Responses content → chat parts via the shared normalizer: input_image
+      // image_url flattens to a plain string (9router PR #236), detail kept.
       const content = Array.isArray(it.content)
-        ? it.content.map((b: { type?: string; text?: string; image_url?: unknown }) =>
-            b.type === "input_image" || b.type === "image_url"
-              ? { type: "image_url", image_url: b.image_url ?? {} }
-              : { type: "text", text: typeof b.text === "string" ? b.text : "" },
-          )
+        ? (() => {
+            const parts: Record<string, unknown>[] = [];
+            for (const b of it.content as Record<string, unknown>[]) {
+              const img =
+                b && typeof b === "object" && (b.type === "input_image" || b.type === "image_url")
+                  ? extractImage(b)
+                  : undefined;
+              if (img) {
+                const part: Record<string, unknown> = { type: "image_url", image_url: { url: img.url } };
+                if (img.detail) (part.image_url as Record<string, unknown>).detail = img.detail;
+                parts.push(part);
+                continue;
+              }
+              const text = b && typeof b === "object" ? (b.text ?? b.content ?? "") : "";
+              parts.push({ type: "text", text: typeof text === "string" ? text : String(text ?? "") });
+            }
+            return parts;
+          })()
         : (it.content ?? "");
       messages.push({ role, content });
     } else if (it.type === "function_call") {

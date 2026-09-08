@@ -13,6 +13,7 @@ import {
   invalidateFreebuffSession,
   wrapFreebuff,
 } from "../providers/freebuff";
+import { estimateTokens, hasVision } from "../providers/images";
 import { type CavemanLevel, injectCaveman, injectPonytail, type PonytailLevel } from "../providers/inject";
 import { resolveEffortAlias } from "../providers/reasoning";
 import { compressMessages } from "../rtk";
@@ -250,10 +251,12 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
     const stream = body.stream === true;
     // capability preflight inputs (computed once): members that cannot serve the
     // request are skipped upfront instead of failing mid-walk
-    const bodyJson = JSON.stringify(body.messages ?? "");
     const needsTools = Array.isArray(body.tools) && body.tools.length > 0;
-    const needsVision = bodyJson.includes("image_url") || bodyJson.includes('"image"');
-    const estTokens = Math.ceil(bodyJson.length / 4);
+    // structured vision scan — substring matching false-positives on text
+    // mentioning "image_url" and misses input_image / AI-SDK image parts
+    const needsVision = hasVision(body.messages);
+    // base64 payload excluded: ~1k flat per image instead of len/4 inflation
+    const estTokens = estimateTokens(body.messages);
     let lastError: string | null = null;
     let lastStatus = 502;
     let lastRaw: { body: string; status: number } | null = null;
@@ -275,11 +278,13 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
         continue;
       }
       // preflight: metadata-known members that can't serve the request are skipped
-      // with a typed reason (regex floor defaults keep unknown models eligible)
+      // with a typed reason (regex floor defaults keep unknown models eligible).
+      // Vision skips only on provider-exact metadata: canonical/seed flags go
+      // stale (e.g. new vision models), so fail open and let upstream decide.
       const meta = enrich(`${provider}/${model}`);
       const missing: string[] = [];
       if (needsTools && !meta.toolCall) missing.push("tools");
-      if (needsVision && !meta.attachment) missing.push("vision");
+      if (needsVision && !meta.attachment && meta.source === "provider") missing.push("vision");
       if (meta.limit?.context && estTokens > meta.limit.context)
         missing.push(`context (${estTokens} est > ${meta.limit.context})`);
       if (missing.length) {
@@ -308,6 +313,7 @@ export async function handleChat(body: Record<string, unknown>, deps: ChatDeps):
       // freebuff speaks chat completions but needs the CLI envelope + a free session
       const fb = def.id === "freebuff";
       const wrapped = cc ? wrapCommandCode(effBody) : null;
+      if (wrapped?.error) return openaiError(400, wrapped.error, deps.requestId);
       const bodyJson = wrapped ? JSON.stringify(wrapped.body) : effBodyStr;
       let accounts: Connection[];
       if (providerCache.has(provider)) {

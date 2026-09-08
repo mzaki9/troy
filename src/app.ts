@@ -95,7 +95,7 @@ function json(data: unknown, status = 200, extra?: Record<string, string>): Resp
 }
 
 const BODY_LIMIT_API = 1 << 20; // 1MB for /api
-const BODY_LIMIT_PROXY = 4 << 20; // 4MB for /v1 (images)
+const BODY_LIMIT_PROXY = 32 << 20; // 32MB for /v1 (base64 images; matches upstream BODY_CAP)
 
 function readBody(request: Request): Promise<unknown> {
   const len = Number(request.headers.get("content-length") ?? 0);

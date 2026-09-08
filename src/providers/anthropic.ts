@@ -3,6 +3,7 @@ import { panic, TAG } from "../logger";
 import { handleChat } from "../proxy/route";
 import { sseTranslate } from "../proxy/stream";
 import type { ChatDeps } from "../proxy/types";
+import { extractImage } from "./images";
 
 /**
  * /v1/messages bridge (Anthropic wire format — Claude Code & friends).
@@ -49,13 +50,12 @@ function systemToText(system: unknown): string | null {
   return text || null;
 }
 
-function imagePart(source: Block["source"]): Record<string, unknown> | null {
-  if (!source) return null;
-  if (source.type === "base64" && source.data) {
-    return { type: "image_url", image_url: { url: `data:${source.media_type ?? "image/png"};base64,${source.data}` } };
-  }
-  if (source.url) return { type: "image_url", image_url: { url: source.url } };
-  return null;
+function imagePart(block: Block): Record<string, unknown> | null {
+  const img = extractImage(block as unknown as Record<string, unknown>);
+  if (!img) return null;
+  const part: Record<string, unknown> = { type: "image_url", image_url: { url: img.url } };
+  if (img.detail) (part.image_url as Record<string, unknown>).detail = img.detail;
+  return part;
 }
 
 function toolResultText(content: unknown): string {
@@ -102,7 +102,7 @@ export function toChatBody(body: Record<string, unknown>): Record<string, unknow
       for (const b of asBlocks(raw.content)) {
         if (b.type === "text") parts.push({ type: "text", text: String(b.text ?? "") });
         else if (b.type === "image") {
-          const img = imagePart(b.source);
+          const img = imagePart(b);
           if (img) parts.push(img);
         } else if (b.type === "tool_result") {
           toolResults.push({
